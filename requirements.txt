@@ -1,4 +1,9 @@
-# pip install -r requirements.txt
+### to install on a GPU device, use: pip install torch>=1.9.1 torchvision>=0.10.1 --index-url https://download.pytorch.org/whl/cu118 --no-cache-dir
+
+### to install on a CPU-only pip install -r requirements.txt
+
+# to install GPU-enabled PyTorch versions
+--extra-index-url https://download.pytorch.org/whl/cu118
 
 # Base ----------------------------------------
 matplotlib>=3.4.3
@@ -11,7 +16,6 @@ scipy>=1.4.1
 torch>=1.9.1
 torchvision>=0.10.1
 tqdm>=4.65.2
-# cudatoolit=10.2
 
 # Logging -------------------------------------
 tensorboard>=2.0.0
@@ -20,4 +24,3 @@ tensorboard>=2.0.0
 # Plotting ------------------------------------
 pandas>=1.3.3
 seaborn>=0.11.2
-
