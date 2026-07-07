@@ -250,6 +250,9 @@ def GFTT_compensate(frame1, frame2):
 
 
 def motion_compensate(frame1, frame2):
+    """
+    This function transforms frame1 so that frame1 matches the camera position of frame2
+    """
     # grid-based KLT tracking
     lk_params = dict(winSize=(15, 15), maxLevel=3,
                      criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.003))
