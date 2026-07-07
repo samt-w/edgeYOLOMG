@@ -2,7 +2,8 @@ import cv2
 import sys
 from MOD_Functions import motion_compensate
 
-# connect to global paths/variables
+# connect to config by adding the parent directory of the current working directory 
+# to the list of paths where Python searches for modules
 sys.path.append('..')
 from config import MASKS_DIR
 
@@ -34,7 +35,9 @@ def FD5_mask(lastFrame1, lastFrame2, currentFrame, video_name, frame_count):
     frameDiff2 = cv2.absdiff(lastFrame2, img_compensate2)
 
     # Average the differences to create the continuous motion mask
-    frameDiff = (frameDiff1 + frameDiff2) / 2
+    # original code was: frameDiff = (frameDiff1 + frameDiff2) / 2
+    # but this returned a warning about datatypes from OpenCV, so the following amendment prevents numerical overflow
+    frameDiff = cv2.addWeighted(frameDiff1, 0.5, frameDiff2, 0.5, 0) 
 
     # Construct the save path using pathlib
     save_dir = MASKS_DIR / video_name

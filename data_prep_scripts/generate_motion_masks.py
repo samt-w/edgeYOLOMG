@@ -3,10 +3,11 @@ import sys
 from collections import deque
 from pathlib import Path
 from motion_mask import FD5_mask
-from config import TRAIN_VIDEOS_DIR, TEST_VIDEOS_DIR
 
-# connect to global paths/variables
+# connect to config by adding the parent directory of the current working directory 
+# to the list of paths where Python searches for modules
 sys.path.append('..')
+from config import TRAIN_VIDEOS_DIR, TEST_VIDEOS_DIR
 
 def process_video_directory(video_dir: Path):
     # this function scans directory for mp4 files and computes motion masks for them

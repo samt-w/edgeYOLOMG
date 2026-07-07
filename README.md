@@ -19,7 +19,10 @@ YOLOMG/
 ├── test_code/    # scripts for creating RGB frames and motion masks from videos
 └── utils/        # core dependencies for YOLO model, such as dataloaders, loss functions, and metrics
 
-## codes to generate dataset is in ./test_code directory
+.env.sanitised contains the global variables that need to be completed by the user in order to run the code
+config.py sets the global variables as paths for scripts to use
+
+## scripts for pre-processing and labelling the datasets are in ./data_prep_scripts/
 ```python generate_motion_masks.py```
 * this is applied to generate the motion masks from the video files
 
