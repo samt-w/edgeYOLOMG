@@ -14,8 +14,8 @@ from torchvision.models import resnet18
 def ECC_stablize(frame1, frame2):
     # grid-based KLT tracking
     blur_kernel = 11
-    prevFrame = cv2.GaussianBlur(frame1, (blur_kernel, blur_kernel), 0)  # 高斯模糊，用于去噪
-    prevFrame = cv2.cvtColor(prevFrame, cv2.COLOR_BGR2GRAY)  # 灰度化
+    prevFrame = cv2.GaussianBlur(frame1, (blur_kernel, blur_kernel), 0)  # Gaussian blur, used for denoising
+    prevFrame = cv2.cvtColor(prevFrame, cv2.COLOR_BGR2GRAY)  # Grayscale conversion
     img1 = prevFrame
 
     currentFrame = cv2.GaussianBlur(frame2, (blur_kernel, blur_kernel), 0)
@@ -51,8 +51,8 @@ def ECC_stablize(frame1, frame2):
 def affine_stablize(frame1, frame2):
     # grid-based KLT tracking
     blur_kernel = 11
-    prevFrame = cv2.GaussianBlur(frame1, (blur_kernel, blur_kernel), 0)  # 高斯模糊，用于去噪
-    prevFrame = cv2.cvtColor(prevFrame, cv2.COLOR_BGR2GRAY)  # 灰度化
+    prevFrame = cv2.GaussianBlur(frame1, (blur_kernel, blur_kernel), 0)  # Gaussian blur, used for denoising
+    prevFrame = cv2.cvtColor(prevFrame, cv2.COLOR_BGR2GRAY)  # Grayscale conversion
 
     currentFame = cv2.GaussianBlur(frame2, (blur_kernel, blur_kernel), 0)
     currentFrame = cv2.cvtColor(currentFame, cv2.COLOR_BGR2GRAY)
@@ -77,13 +77,13 @@ def affine_stablize(frame1, frame2):
 
     pts_cur, st, err = cv2.calcOpticalFlowPyrLK(prevFrame, currentFrame, pts_prev, None, **lk_params)
 
-    # 选择good points
-    good_new = pts_cur[st == 1]  # 当前帧中的跟踪点
-    good_old = pts_prev[st == 1]  # 前一帧中的跟踪点
+    # Select the good points
+    good_new = pts_cur[st == 1]  # Tracking points in the current frame
+    good_old = pts_prev[st == 1]  # Tracking point in the previous frame
 
     points_new = []
     points_old = []
-    # 绘制跟踪框
+    # Draw tracking box
     for i, (new, old) in enumerate(zip(good_new, good_old)):
         a, b = new.ravel()
         c, d = old.ravel()
@@ -99,12 +99,12 @@ def affine_stablize(frame1, frame2):
     points_new = np.array(points_new)
     points_old = np.array(points_old)
 
-    # 根据透视变换矩阵计算变换之后的图像
+    # Calculate the transformed image based on the perspective transformation matrix
     # homography_matrix, status = cv2.findHomography(points_new, points_old, cv2.RANSAC, 3.0)
     # img_compensate = cv2.warpPerspective(frame2, homography_matrix, (width, height), flags=cv2.INTER_LINEAR + cv2.WARP_INVERSE_MAP)
     # homo_inv = np.linalg.inv(homography_matrix)
 
-    # 使用仿射变换矩阵进行图像稳像
+    # Image stabilization using an affine transformation matrix
     # Find affine transformation matrix
     m, _ = cv2.estimateAffinePartial2D(points_new, points_old, maxIters=200, ransacReprojThreshold=3)
 
@@ -124,7 +124,7 @@ def affine_stablize(frame1, frame2):
     m[0, 2] = dx
     m[1, 2] = dy
 
-    # 根据变换矩阵计算变换之后的图像
+    # Calculate the transformed image based on the transformation matrix
     img_compensate = cv2.warpAffine(frame2, m, (width, height))
     m_inv = cv2.invertAffineTransform(m)
     # m_inv = np.linalg.inv(m)
@@ -143,7 +143,7 @@ def translate_compensate(frame1, frame2):
     lk_params = dict(winSize=(15, 15), maxLevel=3,
                      criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.003))
 
-    # 创建随机生成的颜色
+    # Create randomly generated colors
     # color = np.random.randint(0, 255, (3000, 3))
     # width = frame2.shape[1]
     # height = frame2.shape[0]
@@ -170,15 +170,15 @@ def translate_compensate(frame1, frame2):
 
     pts_cur, st, err = cv2.calcOpticalFlowPyrLK(frame1_grid, frame2_grid, pts_prev, None, **lk_params)
 
-    # 选择good points
-    good_new = pts_cur[st == 1]  # 当前帧中的跟踪点
-    good_old = pts_prev[st == 1]  # 前一帧中的跟踪点
+    # Select the good points
+    good_new = pts_cur[st == 1]  # Tracking points in the current frame
+    good_old = pts_prev[st == 1]  # Tracking point in the previous frame
 
     # points_new = []
     # points_old = []
 
-    # 绘制跟踪框
-    # mask0 = np.zeros_like(frame2)  # 为绘制创建掩码图片
+    # Draw tracking box
+    # mask0 = np.zeros_like(frame2)  # Create a mask image for drawing
     motion_distance = []
     translate_x = []
     translate_y = []
@@ -217,8 +217,8 @@ def GFTT_compensate(frame1, frame2):
 
     # Good Features To Track
     feature_params = dict(maxCorners=200, qualityLevel=0.3, minDistance=5, blockSize=11)
-    # 光流法参数
-    # maxLevel 未使用的图像金字塔层数
+    # Optical flow parameters
+    # maxLevel Unused image pyramid levels
     lk_params = dict(winSize=(15, 15), maxLevel=3, criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.03))
 
     # good feature points based method
@@ -232,11 +232,11 @@ def GFTT_compensate(frame1, frame2):
 
     homography_matrix, status = cv2.findHomography(good_new, good_old, cv2.RANSAC, 10.0)
 
-    # 根据变换矩阵计算变换之后的图像
+    # Calculate the transformed image based on the transformation matrix
     compensated = cv2.warpPerspective(frame1, homography_matrix, (width, height),
                                       flags=cv2.INTER_LINEAR + cv2.WARP_INVERSE_MAP)
 
-    # 计算掩膜
+    # Calculate mask
     vertex = np.array([[0, 0], [width, 0], [width, height], [0, height]], dtype=np.float32).reshape(-1, 1, 2)
     homo_inv = np.linalg.inv(homography_matrix)
     vertex_trans = cv2.perspectiveTransform(vertex, homo_inv)
@@ -254,7 +254,7 @@ def motion_compensate(frame1, frame2):
     lk_params = dict(winSize=(15, 15), maxLevel=3,
                      criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.003))
 
-    # 创建随机生成的颜色
+    # Create randomly generated colors
     # color = np.random.randint(0, 255, (3000, 3))
     width = frame2.shape[1]
     height = frame2.shape[0]
@@ -281,15 +281,15 @@ def motion_compensate(frame1, frame2):
 
     pts_cur, st, err = cv2.calcOpticalFlowPyrLK(frame1_grid, frame2_grid, pts_prev, None, **lk_params)
 
-    # 选择good points
-    good_new = pts_cur[st == 1]  # 当前帧中的跟踪点
-    good_old = pts_prev[st == 1]  # 前一帧中的跟踪点
+    # Select the good points
+    good_new = pts_cur[st == 1]  # Tracking points in the current frame
+    good_old = pts_prev[st == 1]  # Tracking point in the previous frame
 
     # points_new = []
     # points_old = []
 
-    # 绘制跟踪框
-    # mask0 = np.zeros_like(frame2)  # 为绘制创建掩码图片
+    # Draw tracking box
+    # mask0 = np.zeros_like(frame2)  # Create a mask image for drawing
     motion_distance = []
     translate_x = []
     translate_y = []
@@ -334,10 +334,10 @@ def motion_compensate(frame1, frame2):
     else:
         homography_matrix, status = cv2.findHomography(good_new, good_old, cv2.RANSAC, 3.0)
 
-    # 根据变换矩阵计算变换之后的图像
+    # Calculate the transformed image based on the transformation matrix
     compensated = cv2.warpPerspective(frame1, homography_matrix, (width, height), flags=cv2.INTER_LINEAR + cv2.WARP_INVERSE_MAP)
 
-    # 计算掩膜
+    # Calculate mask
     vertex = np.array([[0, 0], [width, 0], [width, height], [0, height]], dtype=np.float32).reshape(-1, 1, 2)
     homo_inv = np.linalg.inv(homography_matrix)
     vertex_trans = cv2.perspectiveTransform(vertex, homo_inv)
@@ -354,7 +354,7 @@ def motion_compensate_local(frame1, frame2):
     # grid-based KLT tracking
     lk_params = dict(winSize=(15, 15), maxLevel=3, criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.003))
 
-    # 创建随机生成的颜色
+    # Create randomly generated colors
     # color = np.random.randint(0, 255, (3000, 3))
 
     width = frame2.shape[1]
@@ -375,19 +375,19 @@ def motion_compensate_local(frame1, frame2):
 
     pts_cur, st, err = cv2.calcOpticalFlowPyrLK(frame1, frame2, pts_prev, None, **lk_params)
 
-    # 选择good points
-    good_new = pts_cur[st == 1]  # 当前帧中的跟踪点
-    good_old = pts_prev[st == 1]  # 前一帧中的跟踪点
+    # Select the good points
+    good_new = pts_cur[st == 1]  # Tracking points in the current frame
+    good_old = pts_prev[st == 1]  # Tracking point in the previous frame
     # print('local points num:', len(good_old))
     if len(good_old) < 11:
         homography_matrix = np.array([[0.999, 0, 0], [0, 0.999, 0], [0, 0, 1]])
     else:
         homography_matrix, status = cv2.findHomography(good_new, good_old, cv2.RANSAC, 3.0)
 
-    # 根据变换矩阵计算变换之后的图像
+    # Calculate the transformed image based on the transformation matrix
     compensated = cv2.warpPerspective(frame1, homography_matrix, (width, height), flags=cv2.INTER_LINEAR + cv2.WARP_INVERSE_MAP)
 
-    # 计算掩膜
+    # Calculate mask
     vertex = np.array([[0, 0], [width, 0], [width, height], [0, height]], dtype=np.float32).reshape(-1, 1, 2)
     homo_inv = np.linalg.inv(homography_matrix)
     vertex_trans = cv2.perspectiveTransform(vertex, homo_inv)
@@ -399,13 +399,12 @@ def motion_compensate_local(frame1, frame2):
 
     return compensated, mask
 
-
 def frame_compensate(frame1, frame2):
     # grid-based KLT tracking
     lk_params = dict(winSize=(15, 15), maxLevel=3,
                      criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.003))
 
-    # 创建随机生成的颜色
+    # Create randomly generated colors
     color = np.random.randint(0, 255, (3000, 3))
 
     width = frame2.shape[1]
@@ -426,18 +425,18 @@ def frame_compensate(frame1, frame2):
 
     pts_cur, st, err = cv2.calcOpticalFlowPyrLK(frame1, frame2, pts_prev, None, **lk_params)
 
-    # 选择good points
-    good_new = pts_cur[st == 1]  # 当前帧中的跟踪点
-    good_old = pts_prev[st == 1]  # 前一帧中的跟踪点
+    # Select the good points
+    good_new = pts_cur[st == 1]  # Tracking points in the current frame
+    good_old = pts_prev[st == 1]  # Tracking point in the previous frame
 
     homography_matrix, status = cv2.findHomography(good_new, good_old, cv2.RANSAC, 3.0)
     # homography_matrix, status = cv2.findHomography(points_new, points_old, cv2.RANSAC, 3.0)
     # matchesMask = status.ravel().tolist()
 
-    # 根据变换矩阵计算变换之后的图像
+    # Calculate the transformed image based on the transformation matrix
     # compensated = cv2.warpPerspective(frame1, homography_matrix, (width, height), flags=cv2.INTER_LINEAR + cv2.WARP_INVERSE_MAP)
     #
-    # # 计算掩膜
+    # # Calculate mask
     # vertex = np.array([[0, 0], [width, 0], [width, height], [0, height]], dtype=np.float32).reshape(-1, 1, 2)
     # homo_inv = np.linalg.inv(homography_matrix)
     # vertex_trans = cv2.perspectiveTransform(vertex, homo_inv)
@@ -481,7 +480,7 @@ def dist(x1, y1, x2, y2):
 
 
 def rect_dist(x1, y1, w1, h1, x2, y2, w2, h2):
-    # 转化为左上角和右下角坐标
+    # Convert to top-left and bottom-right coordinates
     x1b = x1 + w1
     y1b = y1 + h1
     x2b = x2 + w2
@@ -514,11 +513,11 @@ def rect_dist(x1, y1, w1, h1, x2, y2, w2, h2):
 
 def two2one(x1, y1, w1, h1, x2, y2, w2, h2):
     """
-    将两个矩形框，变成一个更大的矩形框
-    input：两个矩形框，分别左上角和右下角坐标
-    return：融合后矩形框左上角和右下角坐标
+    Merge two rectangular boxes into a single, larger rectangular box.
+    Input: Two rectangular boxes, defined by the coordinates of their top-left and bottom-right corners.
+    Return: The coordinates of the top-left and bottom-right corners of the merged rectangular box.
     """
-    # 转化为左上角和右下角坐标
+    # Convert to top-left and bottom-right coordinates
     x1b = x1 + w1
     y1b = y1 + h1
     x2b = x2 + w2
@@ -531,12 +530,11 @@ def two2one(x1, y1, w1, h1, x2, y2, w2, h2):
 
     return x, y, xb, yb
 
-
 def box_select(boxes1):
     """
-    多box，最终融合距离近的，留下新的，或未被融合的
-    input：多box的列表，例如：[[12,23,45,56],[36,25,45,63],[30,25,60,35]]
-    return：新的boxes，这里面返回的结果是这样的，被合并的box会置为[]，最终返回的，可能是这样[[],[],[50,23,65,50]]
+    Given multiple boxes, merge those that are close to each other and retain the new (merged) ones alongside any that were not merged.
+    Input: A list of boxes, e.g., `[[12, 23, 45, 56], [36, 25, 45, 63], [30, 25, 60, 35]]`
+    Return: A list of boxes; merged boxes are set to `[]`, so the final result might look like `[[], [], [50, 23, 65, 50]]`.
     """
 
     # print("boxes1:", boxes1)
@@ -560,7 +558,6 @@ def box_select(boxes1):
 
     return boxes1
 
-
 def resnet34_infer(src):
     # net = cv2.dnn.readNetFromONNX('/home/user-guo/Downloads/video/20220731/phantom_100m/far_sky/vgg16_1.onnx')
     net = cv2.dnn.readNetFromONNX('./mydataset/resnet34_1.onnx')
@@ -572,9 +569,7 @@ def resnet34_infer(src):
     index = np.argmax(probs)
     return index
 
-
 class MyNet(nn.Module):
-
     def __init__(self, num_classes=2) -> None:
         super(MyNet, self).__init__()
         self.model = nn.Sequential(
@@ -594,7 +589,6 @@ class MyNet(nn.Module):
         x = self.model(x)
         return x
 
-
 class Net(nn.Module):
     def __init__(self):
         super(Net, self).__init__()
@@ -613,7 +607,6 @@ class Net(nn.Module):
         x = F.relu(self.fc2(x))
         x = self.fc3(x)
         return x
-
 
 def Mynet_infer(src):
     # data_transform = transforms.Compose([transforms.ToTensor()])
@@ -644,7 +637,6 @@ def Mynet_infer(src):
 
     return predict_cla, score
 
-
 def Net_infer(src, net):
     blob = cv2.dnn.blobFromImage(src, 1.0, (32, 32), (0, 0, 0), False)
     net.setInput(blob)
@@ -652,7 +644,6 @@ def Net_infer(src, net):
     index = np.argmax(probs)
 
     return index
-
 
 def Net_onnx(src, session):
     # session = ort.InferenceSession('/home/user-guo/Documents/MovingDrone/weight/Net_best_1.onnx')
@@ -669,7 +660,6 @@ def Net_onnx(src, session):
     predicted_class_idx = np.argmax(outputs[0])
 
     return predicted_class_idx
-
 
 def resnet18_infer(src):
     data_transform = transforms.Compose([transforms.ToTensor()])
@@ -694,7 +684,6 @@ def resnet18_infer(src):
 
     return predict_cla
 
-
 def readGT(file, image_id):
     in_file = open(file + 'frame' + '%s.xml' % image_id, encoding='UTF-8')
     tree = ET.parse(in_file)
@@ -708,7 +697,7 @@ def readGT(file, image_id):
         b = (float(xmlbox.find('xmin').text), float(xmlbox.find('xmax').text), float(xmlbox.find('ymin').text),
              float(xmlbox.find('ymax').text))
         b1, b2, b3, b4 = b
-        # 标注越界修正
+        # Correction for out-of-bounds annotations
         if b2 > w:
             b2 = w
         if b4 > h:
@@ -724,7 +713,6 @@ def readGT(file, image_id):
     box = np.array(box)
 
     return box
-
 
 def enlarge_region2(x, y, a, width, height):
     x1 = x - a
@@ -746,21 +734,19 @@ def enlarge_region2(x, y, a, width, height):
 
     return int(x1), int(y1), int(w1), int(h1)
 
-
 def cal_iou(box1, box2):
     """
-
-    :param box1: xywh 左上右下
+    :param box1: xywh Top-left to bottom-right
     :param box2: xywh
     :transfer to xyxy
     """
     x1min, y1min, x1max, y1max = box1[0], box1[1], box1[0] + box1[2], box1[1] + box1[3]
     x2min, y2min, x2max, y2max = box2[0], box2[1], box2[0] + box2[2], box2[1] + box2[3]
-    # 计算两个框的面积
+    # Calculate the area of ​​the two boxes.
     s1 = (y1max - y1min + 1.) * (x1max - x1min + 1.)
     s2 = (y2max - y2min + 1.) * (x2max - x2min + 1.)
 
-    # 计算相交部分的坐标
+    # Calculate the coordinates of the intersecting part.
     xmin = max(x1min, x2min)
     ymin = max(y1min, y2min)
     xmax = min(x1max, x2max)
@@ -772,7 +758,7 @@ def cal_iou(box1, box2):
     intersection = inter_h * inter_w
     union = s1 + s2 - intersection
 
-    # 计算iou
+    # Calculate IoU
     iou = intersection / union
     return iou
 

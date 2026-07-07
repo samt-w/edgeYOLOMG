@@ -7,7 +7,6 @@ import imgviz
 
 kernel_size = 3
 
-
 def FD5_mask(lastFrame1, lastFrame2, currentFrame, video_name, frame_count):
     lastFrame1 = cv2.GaussianBlur(lastFrame1, (11, 11), 0)
     lastFrame1 = cv2.cvtColor(lastFrame1, cv2.COLOR_BGR2GRAY)
@@ -59,11 +58,11 @@ def FD5_mask(lastFrame1, lastFrame2, currentFrame, video_name, frame_count):
     # frame_depth = thresh.astype(np.float)
     # frame_viz = imgviz.depth2rgb(frame_depth, min_value=5, max_value=30)
 
-    # 对阈值图像进行开操作，减少噪声
+    # Perform an opening operation on the thresholded image to reduce noise.
     # kernel1 = cv2.getStructuringElement(cv2.MORPH_RECT, (kernel_size, kernel_size))
     # open_demo = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel1)
 
-    # 对开操作之后的图像做闭操作，减少孔洞，填充空隙
+    # Perform a closing operation on the image resulting from the opening operation to reduce holes and fill gaps.
     # kernel2 = cv2.getStructuringElement(cv2.MORPH_RECT, (kernel_size, kernel_size))
     # close_demo = cv2.morphologyEx(open_demo, cv2.MORPH_CLOSE, kernel2, iterations=3)
     # # cv2.imshow('Morphological Operation', close_demo)

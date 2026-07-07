@@ -2,7 +2,6 @@ import cv2
 import numpy as np
 from FD5_mask import FD5_mask
 
-
 sets_NPS = ['Clip_01', 'Clip_02', 'Clip_03', 'Clip_04', 'Clip_05', 'Clip_06', 'Clip_07', 'Clip_08', 'Clip_09', 'Clip_10',
             'Clip_11', 'Clip_12', 'Clip_13', 'Clip_14', 'Clip_15', 'Clip_16', 'Clip_17', 'Clip_18', 'Clip_19', 'Clip_20',
             'Clip_21', 'Clip_22', 'Clip_23', 'Clip_24', 'Clip_25', 'Clip_26', 'Clip_27', 'Clip_28', 'Clip_29', 'Clip_30',
@@ -78,5 +77,3 @@ for video_sets in set0:
         lastFrame4 = currentFrame
 
     cap.release()
-
-

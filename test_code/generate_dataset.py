@@ -120,7 +120,7 @@ for video_sets in set2:
             b4 = float(xmlbox.find('ymax').text)
             area = (b2 - b1) * (b4 - b3)
 
-        # 对于global detector, area_thresh = 12 * 12, 对于local detector, area_thresh = 25
+        # For the global detector, area_thresh = 12 * 12; for the local detector, area_thresh = 25
         if area >= 25:
             shutil.copy(img_path, imgdest)
             shutil.copy(mask_path, maskdest)

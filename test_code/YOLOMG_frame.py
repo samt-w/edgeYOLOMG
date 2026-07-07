@@ -25,7 +25,7 @@ if len(boxes) != 0:
         x11, y11, x22, y22 = int(boxes[j][0]), int(boxes[j][1]), int(boxes[j][2]), int(boxes[j][3])
         conf = scores[j]
 
-        # 画出边框和标签
+        # Draw the border and label
         color = (255, 0, 0)
         cv2.rectangle(frame_show, (x11, y11), (x22, y22), color, 1, lineType=cv2.LINE_AA)
         cv2.putText(frame_show, str(f"{conf:.2f}"), (x11, y11 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
