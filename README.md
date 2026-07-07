@@ -1,37 +1,44 @@
-# YOLOMG
-Codes and dataset for the paper "YOLOMG: Vision-based Drone-to-Drone Detection with Appearance and Pixel-Level Motion Fusion"
+# YOLOMG-STW
+This is an adapted repo, cloned from the 'YOLOMG' repo, for Sam Taylor-Wilmshurst's MSc project at Birkbeck College. 
 
 # Dataset
-ARD100 dataset
+The dataset is the ARD100 dataset, created by the original researchers, which can be found here:
 - [BaiduYun](https://pan.baidu.com/s/1ycAoKbzQ1rlzvKr8VRakgw?pwd=1x2z ) (code:1x2z)
 
 ![Dataset Example Images](data/ARD100_samples_show.png "Example Images ")
 
 ## codes to generate dataset is in ./test_code directory
-python generate_mask5.py is applied to generate mask32
+```python generate_mask5.py```
+* this is applied to generate the motion masks from the video files
 
-python YOLOMG_extract_frames.py is used to generate images
+```python YOLOMG_extract_frames.py```
+* this is used to extract the RGB image frames
 
-python generate_dataset.py is used to generate train/test datasets. The videos id division is included.
+```python generate_dataset.py```
+* this is used to generate train/test datasets from the extracted RGB frames and motion masks. It splits the data based on video IDs rather than by random frames.
 
 ## data processing in ./data directory
-### dataset spliting
-python3 split_train_val.py --xml_path xx/xxx/Annotations --txt_path xx/xxx/ImageSets/Main
-### transfer voc label to yolo label with .txt files
-python3 voc2yolo.py
-### generate images directory, train.txt, val.txt, test.txt
-python3 voc_label.py
-### generate mask directory, train2.txt, val2.txt, test2.txt
-Python3 voc_label2.py
+```python3 split_train_val.py --xml_path xx/xxx/Annotations --txt_path xx/xxx/ImageSets/Main```
+* this is used to read the XML annotation files and then split the data into training and validation sets. It then saves the resulting list of filenames into the target directory
 
-# train
-python3 train.py --data data/NPS.yaml --cfg models/NPS_uav_s.yaml --weights yolov5s.pt --batch-size 8 --epochs 100 --imgsz 1280 --name NPS-1280
+```python3 voc2yolo.py```
+* this converts the PASCAL VOC XML bounding box annotations into YOLO TXT format
 
-# val
-python3 val.py --weights runs/train/NPS-1280/weights/best.pt --data data/NPS_test.yaml --task val --conf-thres 0.001 --name NPS_test-1280 --imgsz 1280 --batch-size 8 --device 0
+```python3 voc_label.py```
+* this generates the text files with the file paths for the RGB images (e.g. ...\train.txt, ...\val.txt, ...\test.txt) which the YOLO model will iterate through
 
-# fast demo test
-python3 dualdetector.py
+```python3 voc_label2.py```
+* same as above but for the motion masking images
 
-# DDP train
-python -m torch.distributed.run --nproc_per_node=4 --master_port 12345 train.py --data data/ARD100_mask32.yaml --cfg models/ARD100_drone_s.yaml --weights yolov5s.pt --batch-size 16 --epochs 100 --imgsz 1280 --name ARD100_mask32-1280 --device 0,1,2,3
+## executing training, evaluation, and inference
+```python3 train.py --data data/NPS.yaml --cfg models/NPS_uav_s.yaml --weights yolov5s.pt --batch-size 8 --epochs 100 --imgsz 1280 --name NPS-1280```
+* this runs a training run on a single GPU, using the NPS.yaml configuration, building the NPS_uav_s.yaml model architecture, initialising with standard YOLOv5s weights, and training with 100 epochs on 1280x1280 size images, before saving the outputs in the NPS-1280 directory
+
+```python -m torch.distributed.run --nproc_per_node=4 --master_port 12345 train.py --data data/ARD100_mask32.yaml --cfg models/ARD100_drone_s.yaml --weights yolov5s.pt --batch-size 16 --epochs 100 --imgsz 1280 --name ARD100_mask32-1280 --device 0,1,2,3```
+* this runs a distributed training run, in this case on four GPUs
+
+```python3 val.py --weights runs/train/NPS-1280/weights/best.pt --data data/NPS_test.yaml --task val --conf-thres 0.001 --name NPS_test-1280 --imgsz 1280 --batch-size 8 --device 0```
+* this evaluates the trained best.pt weights at a very low confidence threshold (0.001)
+
+```python3 dualdetector.py```
+* this runs a quick inference run to verify the system works
