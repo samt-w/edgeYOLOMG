@@ -1,11 +1,10 @@
 import cv2
 import sys
-import numpy as np
 from MOD_Functions import motion_compensate
 
 # connect to global paths/variables
 sys.path.append('..')
-from config import ARD100_MASKS_DIR
+from config import MASKS_DIR
 
 def FD5_mask(lastFrame1, lastFrame2, currentFrame, video_name, frame_count):
     # Blur images to eliminate some low-level noise 
@@ -25,7 +24,7 @@ def FD5_mask(lastFrame1, lastFrame2, currentFrame, video_name, frame_count):
     frameDiff = (frameDiff1 + frameDiff2) / 2
 
     # Construct the save path using pathlib
-    save_dir = ARD100_MASKS_DIR / video_name
+    save_dir = MASKS_DIR / video_name
     save_dir.mkdir(parents=True, exist_ok=True)
     
     # Save the output image

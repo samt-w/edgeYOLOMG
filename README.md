@@ -20,7 +20,7 @@ YOLOMG/
 └── utils/        # core dependencies for YOLO model, such as dataloaders, loss functions, and metrics
 
 ## codes to generate dataset is in ./test_code directory
-```python generate_mask5.py```
+```python generate_motion_masks.py```
 * this is applied to generate the motion masks from the video files
 
 ```python YOLOMG_extract_frames.py```
