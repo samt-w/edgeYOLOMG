@@ -5,7 +5,7 @@ from torchvision import transforms
 import torch.nn.functional as F
 import torch
 import xml.etree.ElementTree as ET
-import onnxruntime as ort
+# import onnxruntime as ort
 from PIL import Image
 
 from torchvision.models import resnet18
