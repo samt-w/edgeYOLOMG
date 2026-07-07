@@ -4,3 +4,6 @@ env/
 .env
 __pycache__/
 *.pyc
+
+# Data files
+data_processed_ARD100/
