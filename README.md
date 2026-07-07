@@ -1,11 +1,23 @@
 # YOLOMG-STW
 This is an adapted repo, cloned from the 'YOLOMG' repo, for Sam Taylor-Wilmshurst's MSc project at Birkbeck College. 
 
+This is a model trying to detect UAVs in video data. The original YOLOMG model was adapted from YOLOv5s. It added a motion-masking classical computer vision algorithm.
+
+This project aims to run YOLOMG on edge hardware (a NVIDIA Jetson Orin Nano) to see whether the algorithm's high mAP and FPS can be maintained on constrained hardware.
+
 # Dataset
 The dataset is the ARD100 dataset, created by the original researchers, which can be found here:
 - [BaiduYun](https://pan.baidu.com/s/1ycAoKbzQ1rlzvKr8VRakgw?pwd=1x2z ) (code:1x2z)
 
 ![Dataset Example Images](data/ARD100_samples_show.png "Example Images ")
+
+# Repo Structure
+
+YOLOMG/
+├── data/         # scripts for generating and formatting the dataset
+├── models/       # network architecture .yaml documents and core PyTorch modules
+├── test_code/    # scripts for creating RGB frames and motion masks from videos
+└── utils/        # core dependencies for YOLO model, such as dataloaders, loss functions, and metrics
 
 ## codes to generate dataset is in ./test_code directory
 ```python generate_mask5.py```
