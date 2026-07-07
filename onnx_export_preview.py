@@ -8,7 +8,8 @@ from models.yolo import Detect
 from utils.activations import SiLU
 
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-weights = 'C:/Users/samta/programming/python/yolomg-copy/runs/train/ARD100_mask32-1280_uavs/weights/best.pt'  # path to your trained weights
+# path to the trained weights
+weights = 'C:/Users/samta/programming/python/yolomg-copy/runs/train/ARD100_mask32-1280_uavs/weights/best.pt'  
 
 model = attempt_load(weights, map_location=device)
 model.eval()
@@ -23,7 +24,7 @@ for k, m in model.named_modules():
         m.inplace = False
         m.onnx_dynamic = False
 
-imgsz = 1280  # match whatever you trained at
+imgsz = 1280  # match whatever the model was originally trained at
 im1 = torch.zeros(1, 3, imgsz, imgsz).to(device)  # x1: motion mask
 im2 = torch.zeros(1, 3, imgsz, imgsz).to(device)  # x2: RGB frame
 
