@@ -1,3 +1,5 @@
+## This script converts .pt weights to ONNX
+
 import torch
 import torch.nn as nn
 from models.experimental import attempt_load
