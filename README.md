@@ -13,14 +13,14 @@ The dataset is the ARD100 dataset, created by the original researchers, which ca
 
 # Repo Structure
 
-YOLOMG/
-├── data/         # scripts for generating and formatting the dataset
-├── models/       # network architecture .yaml documents and core PyTorch modules
-├── test_code/    # scripts for creating RGB frames and motion masks from videos
-└── utils/        # core dependencies for YOLO model, such as dataloaders, loss functions, and metrics
+YOLOMG/  
+├── data_prep_scripts/         # scripts for generating and formatting the dataset  
+├── models/                    # network architecture .yaml documents and core PyTorch modules  
+├── test_code/                 # scripts for creating RGB frames and motion masks from videos  
+└── utils/                     # core dependencies for YOLO model, such as dataloaders, loss functions, and metrics  
 
-.env.sanitised contains the global variables that need to be completed by the user in order to run the code
-config.py sets the global variables as paths for scripts to use
+.env.sanitised contains the global variables that need to be completed by the user in order to run the code  
+config.py sets the global variables as paths for scripts to use  
 
 ## scripts for pre-processing and labelling the datasets are in ./data_prep_scripts/
 ```python generate_motion_masks.py```
