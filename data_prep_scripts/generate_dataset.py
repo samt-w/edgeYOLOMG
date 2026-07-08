@@ -3,162 +3,151 @@ import shutil
 import cv2
 import xml.etree.ElementTree as ET
 import random
-import numpy as np
+import sys
+from pathlib import Path
+# connect to config by adding the parent directory of the current working directory 
+# to the list of paths where Python searches for modules
+sys.path.append('..')
+from config import (
+    RANDOM_SEED, 
+    ANNOTATIONS_DIR,
+    IMAGES_DIR, MASKS_DIR, 
+    IMAGES_TRAIN_DIR, MASKS_TRAIN_DIR, LABELS_TRAIN_DIR,
+    IMAGES_VAL_DIR, MASKS_VAL_DIR, LABELS_VAL_DIR,
+    IMAGES_TEST_DIR, MASKS_TEST_DIR, LABELS_TEST_DIR,
+    PROCESSED_DATA_DIR,
+    ARD100_TRAIN_LIST, ARD100_TEST_LIST 
+)
 
+# define validation split
+random.seed(RANDOM_SEED)
+VALIDATION_SPLIT_RATIO = 0.20
+train_videos_shuffled = ARD100_TRAIN_LIST.copy()
+random.shuffle(train_videos_shuffled)
+val_split_index = int(len(train_videos_shuffled) * (1 - VALIDATION_SPLIT_RATIO))
 
-# ARD100 all videos
-set0 = ['phantom02', 'phantom03', 'phantom04', 'phantom05', 'phantom08', 'phantom09', 'phantom10', 'phantom14', 'phantom17', 'phantom19',
-        'phantom20', 'phantom22', 'phantom28', 'phantom29', 'phantom30', 'phantom32', 'phantom36', 'phantom39', 'phantom40', 'phantom41',
-        'phantom42', 'phantom43', 'phantom44', 'phantom45', 'phantom46', 'phantom47', 'phantom50', 'phantom54', 'phantom55', 'phantom56',
-        'phantom57', 'phantom58', 'phantom60', 'phantom61', 'phantom63', 'phantom64', 'phantom65', 'phantom66', 'phantom68', 'phantom70',
-        'phantom71', 'phantom73', 'phantom74', 'phantom75', 'phantom76', 'phantom77', 'phantom78', 'phantom79', 'phantom80', 'phantom81',
-        'phantom82', 'phantom84', 'phantom85', 'phantom86', 'phantom87', 'phantom89', 'phantom90', 'phantom92', 'phantom93', 'phantom94',
-        'phantom95', 'phantom97', 'phantom101', 'phantom102', 'phantom103', 'phantom104', 'phantom105', 'phantom106', 'phantom107', 'phantom108',
-        'phantom109', 'phantom110', 'phantom111', 'phantom112', 'phantom113', 'phantom114', 'phantom115', 'phantom116', 'phantom117', 'phantom118',
-        'phantom119', 'phantom120', 'phantom132', 'phantom133', 'phantom135', 'phantom136', 'phantom137', 'phantom138', 'phantom139', 'phantom140',
-        'phantom141', 'phantom142', 'phantom143', 'phantom144', 'phantom145', 'phantom146', 'phantom147', 'phantom148', 'phantom149', 'phantom150']
+train_videos = train_videos_shuffled[:val_split_index]
+val_videos = train_videos_shuffled[val_split_index:]
+test_videos = ARD100_TEST_LIST
 
-# ARD100 train dataset
-set1 = ['phantom09', 'phantom10', 'phantom14', 'phantom17', 'phantom19', 'phantom20', 'phantom28', 'phantom29', 'phantom30', 'phantom32',
-        'phantom36', 'phantom40', 'phantom42', 'phantom43', 'phantom44', 'phantom46', 'phantom63', 'phantom65', 'phantom66', 'phantom68',
-        'phantom70', 'phantom71', 'phantom74', 'phantom75', 'phantom76', 'phantom77', 'phantom78', 'phantom80', 'phantom81', 'phantom82',
-        'phantom84', 'phantom85', 'phantom86', 'phantom87', 'phantom89', 'phantom90', 'phantom101', 'phantom103', 'phantom104', 'phantom105',
-        'phantom106', 'phantom107', 'phantom108', 'phantom109', 'phantom111', 'phantom112', 'phantom114', 'phantom115', 'phantom116', 'phantom117',
-        'phantom118', 'phantom120', 'phantom132', 'phantom137', 'phantom138', 'phantom139', 'phantom140', 'phantom142', 'phantom143', 'phantom145',
-        'phantom146', 'phantom147', 'phantom148', 'phantom149', 'phantom150']
+def ensure_dirs():
+    """Create all required output directories defined in config."""
+    for directory in [
+        IMAGES_TRAIN_DIR, MASKS_TRAIN_DIR, LABELS_TRAIN_DIR,
+        IMAGES_VAL_DIR, MASKS_VAL_DIR, LABELS_VAL_DIR,
+        IMAGES_TEST_DIR, MASKS_TEST_DIR, LABELS_TEST_DIR
+    ]:
+        directory.mkdir(parents=True, exist_ok=True)
 
-# NPS train dataset
-sets_NPS = ['Clip_01', 'Clip_02', 'Clip_03', 'Clip_04', 'Clip_05', 'Clip_06', 'Clip_07', 'Clip_08', 'Clip_09', 'Clip_10',
-            'Clip_11', 'Clip_12', 'Clip_13', 'Clip_14', 'Clip_15', 'Clip_16', 'Clip_17', 'Clip_18', 'Clip_19', 'Clip_20',
-            'Clip_21', 'Clip_22', 'Clip_23', 'Clip_24', 'Clip_25', 'Clip_26', 'Clip_27', 'Clip_28', 'Clip_29', 'Clip_30',
-            'Clip_31', 'Clip_32', 'Clip_33', 'Clip_34', 'Clip_35', 'Clip_36', 'Clip_37', 'Clip_38', 'Clip_39', 'Clip_40']
+def convert_to_yolo_format(size, box):
+    """Converts PASCAL VOC bounding box to YOLO format (normalized xywh)."""
+    dw = 1.0 / size[0]
+    dh = 1.0 / size[1]
+    
+    # Calculate center x, center y, width, and height
+    x = (box[0] + box[1]) / 2.0
+    y = (box[2] + box[3]) / 2.0
+    w = box[1] - box[0]
+    h = box[3] - box[2]
+    
+    # Normalize
+    x = x * dw
+    w = w * dw
+    y = y * dh
+    h = h * dh
+    return (x, y, w, h)
 
-# NPS test dataset
-sets_NPS_test = ['Clip_41', 'Clip_42', 'Clip_43', 'Clip_44', 'Clip_45', 'Clip_46', 'Clip_47', 'Clip_48', 'Clip_49', 'Clip_50']
-
-# ARD100 test videos
-set2 = ['phantom02', 'phantom03', 'phantom04', 'phantom05', 'phantom08', 'phantom22', 'phantom39',
-        'phantom41', 'phantom45', 'phantom47', 'phantom50', 'phantom54', 'phantom55', 'phantom56',
-        'phantom57', 'phantom58', 'phantom60', 'phantom61', 'phantom64', 'phantom73', 'phantom79',
-        'phantom92', 'phantom93', 'phantom94', 'phantom95', 'phantom97', 'phantom102', 'phantom110',
-        'phantom113', 'phantom119', 'phantom133', 'phantom135', 'phantom136', 'phantom141', 'phantom144']
-
-# domain adaptation
-# new scenes
-sets_new_scenes = ['phantom02', 'phantom03', 'phantom04', 'phantom05', 'phantom47', 'phantom50',
-                   'phantom54', 'phantom55', 'phantom56', 'phantom57', 'phantom58', 'phantom60']
-
-# low light adaptation
-sets_low = ['phantom95', 'phantom97', 'phantom133', 'phantom135', 'phantom136']
-
-small_num = 0
-
-# different size test
-set_es = ['phantom04', 'phantom22', 'phantom39', 'phantom41', 'phantom45', 'phantom50', 'phantom54', 'phantom55', 'phantom61', 'phantom64', 'phantom73', 'phantom94']  # smaller than 144
-set_rs = ['phantom02', 'phantom56', 'phantom57', 'phantom58', 'phantom60', 'phantom79', 'phantom92', 'phantom102', 'phantom110', 'phantom113', 'phantom119', 'phantom141', 'phantom144']  # 144~400
-set_gs = ['phantom03', 'phantom05', 'phantom47', 'phantom93']  # 400~1024
-
-
-for video_sets in set2:
-    id = video_sets
-    imgdir = "/home/user-guo/data/drone-dataset/phantom-dataset/images/" + id + "/"
-    annodir = '/home/user-guo/data/drone-dataset/phantom-dataset/Annotations/' + id + '/'
-    maskdir = '/home/user-guo/data/drone-dataset/phantom-dataset/mask22/' + id + '/'
-
-    imgdest = '/home/user-guo/Documents/YOLOMG/datasets/ARD100_mask22/images/'
-    annodest = '/home/user-guo/Documents/YOLOMG/datasets/ARD100_mask22/Annotations/'
-    maskdest = '/home/user-guo/Documents/YOLOMG/datasets/ARD100_mask22/mask22/'
-
-    if not os.path.exists(imgdest):
-        os.makedirs(imgdest)
-
-    if not os.path.exists(annodest):
-        os.makedirs(annodest)
-
-    if not os.path.exists(maskdest):
-        os.makedirs(maskdest)
-
-    # end_index = int(len(image_list)/3)
-
-    # for image in image_list:
-    #     img = cv2.imread(imgdir + image)
-    #     img_prefix = image.split('_')[0]
-    #     # pic_height, pic_width, pic_depth = img.shape[0], img.shape[1], img.shape[2]
-    #     break
-
-    image_list = os.listdir(maskdir)
-    num_of_image = len(image_list)
-    end_index = int(num_of_image/1)
-    # num_of_train = int(num_of_image * 0.4)
-    # train_list = np.sort(random.sample(image_list, num_of_train))
-
-    # for image in train_list:
-    for i in range(end_index):
-        image = id + '_' + str(i*1 + 2).zfill(4)
-        name = image.split(".")
-        imgname = name[0] + '.jpg'
-        xmlname = name[0] + '.xml'
-
-        img_path = os.path.join(imgdir, imgname)
-        mask_path = os.path.join(maskdir, imgname)
-        xml_path = os.path.join(annodir, xmlname)
-
-        if not os.path.exists(xml_path):
+def process_dataset(video_list, img_dest, mask_dest, label_dest):
+    """Processes videos, converts annotations, and copies files to target directories."""
+    small_num = 0
+    total_processed = 0
+    
+    for video_id in video_list:
+        # Define raw paths based on standard structure. 
+        # Update these if your raw structure differs from the old script's assumptions.
+        img_dir = IMAGES_DIR / video_id
+        mask_dir = MASKS_DIR / video_id
+        anno_dir = ANNOTATIONS_DIR / video_id
+        
+        if not anno_dir.exists():
+            print(f"Warning: Annotation directory missing for {video_id}, skipping.")
             continue
 
-        tree = ET.parse(xml_path)
-        root = tree.getroot()
+        # Iterate over all XML files rather than hardcoded index matching
+        for xml_file in os.listdir(anno_dir):
+            if not xml_file.endswith('.xml'):
+                continue
+                
+            xml_path = anno_dir / xml_file
+            base_name = os.path.splitext(xml_file)[0]
+            img_name = f"{base_name}.jpg"
+            
+            img_path = img_dir / img_name
+            mask_path = mask_dir / img_name
+            
+            if not img_path.exists():
+                continue
+                
+            tree = ET.parse(xml_path)
+            root = tree.getroot()
+            
+            if root.find('object') is None:
+                continue
+                
+            size = root.find('size')
+            img_w = int(size.find('width').text)
+            img_h = int(size.find('height').text)
+            
+            yolo_labels = []
+            
+            for obj in root.iter('object'):
+                xmlbox = obj.find('bndbox')
+                b1 = float(xmlbox.find('xmin').text)
+                b2 = float(xmlbox.find('xmax').text)
+                b3 = float(xmlbox.find('ymin').text)
+                b4 = float(xmlbox.find('ymax').text)
+                area = (b2 - b1) * (b4 - b3)
+                
+                # Minimum area threshold from original script
+                if area >= 25:
+                    yolo_bbox = convert_to_yolo_format((img_w, img_h), (b1, b2, b3, b4))
+                    class_id = 0 # Defaulting to single class '0'
+                    yolo_labels.append(f"{class_id} {yolo_bbox[0]:.6f} {yolo_bbox[1]:.6f} {yolo_bbox[2]:.6f} {yolo_bbox[3]:.6f}")
+                else:
+                    small_num += 1
+            
+            # Only copy files if at least one valid object was found
+            if yolo_labels:
+                # 1. Write YOLO .txt label
+                label_path = label_dest / f"{base_name}.txt"
+                with open(label_path, 'w') as f:
+                    f.write('\n'.join(yolo_labels) + '\n')
+                
+                # 2. Copy Image
+                shutil.copy(img_path, img_dest / img_name)
+                
+                # 3. Copy Mask (if it exists)
+                if mask_path.exists():
+                    shutil.copy(mask_path, mask_dest / img_name)
+                    
+                total_processed += 1
 
-        if root.find('object') is None:
-            continue
+    return total_processed, small_num
 
-        for obj in root.iter('object'):
-            xmlbox = obj.find('bndbox')
-            b1 = float(xmlbox.find('xmin').text)
-            b2 = float(xmlbox.find('xmax').text)
-            b3 = float(xmlbox.find('ymin').text)
-            b4 = float(xmlbox.find('ymax').text)
-            area = (b2 - b1) * (b4 - b3)
-
-        # For the global detector, area_thresh = 12 * 12; for the local detector, area_thresh = 25
-        if area >= 25:
-            shutil.copy(img_path, imgdest)
-            shutil.copy(mask_path, maskdest)
-            shutil.copy(xml_path, annodest)
-            print(xmlname)
-        else:
-            print(xmlname, end=' ')
-            small_num = small_num + 1
-            print('too small object: ', area)
-
-print('small object num: ', small_num)
-
-# for i in range(end_index):
-#     # for image in image_list:
-#     num = str(i * 3 + 1)
-#     # num = str(i)
-#     imgname = id + '_' + num.zfill(4) + '.jpg'
-#     xmlname = id + '_' + num.zfill(4) + '.xml'
-#
-#     # image_pre, ext = os.path.splitext(image)
-#     # imgname = image_pre + '.jpg'
-#     # xmlname = image_pre + '.xml'
-#
-#     img_path = os.path.join(imgdir, imgname)
-#     xml_path = os.path.join(annodir, xmlname)
-#
-#     if not os.path.exists(xml_path):
-#         continue
-#
-#     tree = ET.parse(xml_path)
-#     root = tree.getroot()
-#
-#     if root.find('object') is None:
-#         continue
-#
-#     # if not os.path.exists(img_path):
-#     #     continue
-#
-#     shutil.copy(img_path, imgdest)
-#     shutil.copy(xml_path, annodest)
-#     print(xmlname)
+if __name__ == "__main__":
+    ensure_dirs()
+    
+    print("Processing Training Set...")
+    train_proc, train_small = process_dataset(train_videos, IMAGES_TRAIN_DIR, MASKS_TRAIN_DIR, LABELS_TRAIN_DIR)
+    
+    print("Processing Validation Set...")
+    val_proc, val_small = process_dataset(val_videos, IMAGES_VAL_DIR, MASKS_VAL_DIR, LABELS_VAL_DIR)
+    
+    print("Processing Test Set...")
+    test_proc, test_small = process_dataset(test_videos, IMAGES_TEST_DIR, MASKS_TEST_DIR, LABELS_TEST_DIR)
+    
+    print("\nDataset Generation Complete.")
+    print(f"Train samples: {train_proc}")
+    print(f"Val samples:   {val_proc}")
+    print(f"Test samples:  {test_proc}")
+    print(f"Total small objects ignored (<25 pixels): {train_small + val_small + test_small}")
