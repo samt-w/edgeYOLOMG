@@ -20,7 +20,7 @@ def sync_env_example():
             # Strip values from variables
             elif "=" in line:
                 key = line.split("=", 1)[0]
-                f_out.write(f'{key} = "your_value_here"\n')
+                f_out.write(f'{key} = "insert_value_here"\n')
 
 if __name__ == "__main__":
     sync_env_example()

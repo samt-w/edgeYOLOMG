@@ -26,13 +26,12 @@ config.py sets the global variables as paths for scripts to use
 ```python generate_motion_masks.py```
 * this is applied to generate the motion masks from the video files
 
-```python YOLOMG_extract_frames.py```
+```python extract_frames.py```
 * this is used to extract the RGB image frames
 
 ```python generate_dataset.py```
 * this is used to generate train/test datasets from the extracted RGB frames and motion masks. It splits the data based on video IDs rather than by random frames.
 
-## data processing in ./data directory
 ```python3 split_train_val.py --xml_path xx/xxx/Annotations --txt_path xx/xxx/ImageSets/Main```
 * this is used to read the XML annotation files and then split the data into training and validation sets. It then saves the resulting list of filenames into the target directory
 
