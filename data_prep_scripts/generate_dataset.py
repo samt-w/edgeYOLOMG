@@ -1,4 +1,6 @@
 import os
+import concurrent.futures
+import itertools
 import shutil
 import xml.etree.ElementTree as ET
 import random
@@ -54,88 +56,110 @@ def convert_to_yolo_format(size, box):
     h = h * dh
     return (x, y, w, h)
 
-def process_dataset(video_list, img_dest, mask_dest, label_dest):
-    """Processes videos, converts annotations, and copies files to target directories."""
+def process_single_video(video_id, img_dest, mask_dest, label_dest):
+    """Processes a video, converts annotations, and copies files to target directories, and cleans up."""
     small_num = 0
     total_processed = 0
-    
-    for video_id in video_list:
-        # Define raw paths based on standard structure. 
-        # Update these if your raw structure differs from the old script's assumptions.
-        img_dir = IMAGES_DIR / video_id
-        mask_dir = MASKS_DIR / video_id
-        anno_dir = ANNOTATIONS_DIR / video_id
-        
-        if not anno_dir.exists():
-            print(f"Warning: Annotation directory missing for {video_id}, skipping.")
-            continue
 
-        # Iterate over all XML files rather than hardcoded index matching
-        for xml_file in os.listdir(anno_dir):
-            if not xml_file.endswith('.xml'):
-                continue
-                
-            xml_path = anno_dir / xml_file
-            base_name = os.path.splitext(xml_file)[0]
-            img_name = f"{base_name}.jpg"
-            
-            img_path = img_dir / img_name
-            mask_path = mask_dir / img_name
-            
-            if not img_path.exists():
-                continue
-                
-            tree = ET.parse(xml_path)
-            root = tree.getroot()
-            
-            if root.find('object') is None:
-                continue
-                
-            size = root.find('size')
-            img_w = int(size.find('width').text)
-            img_h = int(size.find('height').text)
-            
-            yolo_labels = []
-            
-            for obj in root.iter('object'):
-                xmlbox = obj.find('bndbox')
-                b1 = float(xmlbox.find('xmin').text)
-                b2 = float(xmlbox.find('xmax').text)
-                b3 = float(xmlbox.find('ymin').text)
-                b4 = float(xmlbox.find('ymax').text)
-                area = (b2 - b1) * (b4 - b3)
-                
-                # Minimum area threshold from original script
-                if area >= 25:
-                    yolo_bbox = convert_to_yolo_format((img_w, img_h), (b1, b2, b3, b4))
-                    class_id = 0 # Defaulting to single class '0'
-                    yolo_labels.append(f"{class_id} {yolo_bbox[0]:.6f} {yolo_bbox[1]:.6f} {yolo_bbox[2]:.6f} {yolo_bbox[3]:.6f}")
-                else:
-                    small_num += 1
-            
-            # Only copy files if at least one valid object was found
-            if yolo_labels:
-                # 1. Write YOLO .txt label
-                label_path = label_dest / f"{base_name}.txt"
-                with open(label_path, 'w') as f:
-                    f.write('\n'.join(yolo_labels) + '\n')
-                
-                # 2. Copy Image
-                shutil.copy(img_path, img_dest / img_name)
-                
-                # 3. Copy Mask (if it exists)
-                if mask_path.exists():
-                    shutil.copy(mask_path, mask_dest / img_name)
-                    
-                total_processed += 1
+    # Define raw paths based on standard structure. 
+    # Update these if your raw structure differs from the old script's assumptions.
+    img_dir = IMAGES_DIR / video_id
+    mask_dir = MASKS_DIR / video_id
+    anno_dir = ANNOTATIONS_DIR / video_id
     
-        # delete intermediate folders from extract_frames.py and generate_motion_masks.py to save disk space
-        if img_dir:
-            shutil.rmtree(img_dir)
-        if mask_dir:
-            shutil.rmtree(mask_dir)
+    if not anno_dir.exists():
+        print(f"Warning: Annotation directory missing for {video_id}, skipping.")
+        return 0, 0
+
+    # Iterate over all XML files rather than hardcoded index matching
+    for xml_file in os.listdir(anno_dir):
+        if not xml_file.endswith('.xml'):
+            continue
+            
+        xml_path = anno_dir / xml_file
+        base_name = os.path.splitext(xml_file)[0]
+        img_name = f"{base_name}.jpg"
+        
+        img_path = img_dir / img_name
+        mask_path = mask_dir / img_name
+        
+        if not img_path.exists():
+            continue
+            
+        tree = ET.parse(xml_path)
+        root = tree.getroot()
+        
+        if root.find('object') is None:
+            continue
+            
+        size = root.find('size')
+        img_w = int(size.find('width').text)
+        img_h = int(size.find('height').text)
+        
+        yolo_labels = []
+        
+        for obj in root.iter('object'):
+            xmlbox = obj.find('bndbox')
+            b1 = float(xmlbox.find('xmin').text)
+            b2 = float(xmlbox.find('xmax').text)
+            b3 = float(xmlbox.find('ymin').text)
+            b4 = float(xmlbox.find('ymax').text)
+            area = (b2 - b1) * (b4 - b3)
+            
+            # Minimum area threshold from original script
+            if area >= 25:
+                yolo_bbox = convert_to_yolo_format((img_w, img_h), (b1, b2, b3, b4))
+                class_id = 0 # Defaulting to single class 0
+                yolo_labels.append(f"{class_id} {yolo_bbox[0]:.6f} {yolo_bbox[1]:.6f} {yolo_bbox[2]:.6f} {yolo_bbox[3]:.6f}")
+            else:
+                small_num += 1
+        
+        # only copy files if at least one valid object was found
+        if yolo_labels:
+            # write YOLO .txt label
+            label_path = label_dest / f"{base_name}.txt"
+            with open(label_path, 'w') as f:
+                f.write('\n'.join(yolo_labels) + '\n')
+            
+            # copy image
+            import shutil # to ensure shutil is available when parallelising
+            shutil.copy(img_path, img_dest / img_name)
+            
+            # copy mask (if it exists)
+            if mask_path.exists():
+                shutil.copy(mask_path, mask_dest / img_name)
+                
+            total_processed += 1
+
+    # delete intermediate folders created by extract_frames.py and generate_motion_masks.py to save disk space
+    if img_dir.exists():
+        shutil.rmtree(img_dir)
+    if mask_dir.exists():
+        shutil.rmtree(mask_dir)
 
     return total_processed, small_num
+
+def process_dataset(video_list, img_dest, mask_dest, label_dest):
+    """Distributes video processing across multiple CPU cores."""
+    total_processed = 0
+    total_small = 0
+    
+    with concurrent.futures.ProcessPoolExecutor() as executor:
+        # itertools.repeat ensures the destination paths are passed to every function call
+        results = executor.map(
+            process_single_video, 
+            video_list,
+            itertools.repeat(img_dest),
+            itertools.repeat(mask_dest),
+            itertools.repeat(label_dest)
+        )
+        
+    # aggregate results from all processed videos
+    for proc, small in results:
+        total_processed += proc
+        total_small += small
+        
+    return total_processed, total_small
 
 if __name__ == "__main__":
     ensure_dirs()

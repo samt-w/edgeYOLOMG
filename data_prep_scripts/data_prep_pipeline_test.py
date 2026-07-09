@@ -5,6 +5,7 @@
 
 from pathlib import Path
 import sys
+import time
 import concurrent.futures
 # connect to config by adding the parent directory of the current working directory 
 # to the list of paths where Python searches for modules
@@ -26,6 +27,8 @@ from generate_dataset import (
 )
 
 def main():
+    pipeline_start_time = time.time()
+
     # select 2 videos from each split
     test_train_vids = train_videos[:2]
     test_val_vids = val_videos[:2]
@@ -40,19 +43,26 @@ def main():
     # add test video paths
     for vid in test_test_vids:
         video_paths.append(TEST_VIDEOS_DIR / f"{vid}.mp4")
+    
+    num_videos = len(video_paths)
 
     # extract frames for the 6 selected videos
     print("--- Extracting frames in parallel ---")
+    frames_start_time = time.time()
     with concurrent.futures.ProcessPoolExecutor() as executor:
         executor.map(process_video_frames, video_paths)
+    frames_duration = time.time() - frames_start_time
     
     # generate motion masks for the 6 selected videos
     print("--- Generating masks in parallel ---")
+    masks_start_time = time.time()
     with concurrent.futures.ProcessPoolExecutor() as executor:
-        executor.map(process_video_frames, video_paths)
+        executor.map(process_video_masks, video_paths)
+    masks_duration = time.time() - masks_start_time
 
     # 4. Generate the dataset structure for the selected videos
-    print("\n--- Generating Dataset Structure ---")
+    print("--- Generating Dataset Structure ---")
+    dataset_start_time = time.time()
     ensure_dirs()
     
     print("Processing Training subset...")
@@ -63,8 +73,21 @@ def main():
     
     print("Processing Test subset...")
     process_dataset(test_test_vids, IMAGES_TEST_DIR, MASKS_TEST_DIR, LABELS_TEST_DIR)
-    
-    print("\nTest pipeline complete!")
+    dataset_duration = time.time() - dataset_start_time
+
+    pipeline_duration = time.time() - pipeline_start_time
+
+    # timing report
+    print("\n" + "=" * 20)
+    print("PREPROCESSING PIPELINE TIMING REPORT")
+    print("=" * 20)
+    print(f"Total videos processed:     {num_videos}")
+    print(f"Time to extract frames:     {frames_duration:.2f} seconds")
+    print(f"Time to generate masks:     {masks_duration:.2f} seconds")
+    print(f"Time to generate dataset:   {dataset_duration:.2f} seconds")
+    print("-" * 20)
+    print(f"TOTAL PIPELINE DURATION:    {pipeline_duration:.2f} seconds")
+    print("=" * 20)
 
 if __name__ == "__main__":
     main()
