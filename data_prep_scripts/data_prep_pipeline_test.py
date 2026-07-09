@@ -3,9 +3,9 @@
 ## generate_motion_masks.py
 ## generate_dataset.py
 
-# test_pipeline.py
 from pathlib import Path
 import sys
+import concurrent.futures
 # connect to config by adding the parent directory of the current working directory 
 # to the list of paths where Python searches for modules
 sys.path.append('..')
@@ -18,8 +18,8 @@ from config import (
 )
 
 # Import functions from pipeline scripts
-from extract_frames import process_single_video_frames
-from generate_motion_masks import process_single_video_masks
+from extract_frames import process_video_frames
+from generate_motion_masks import process_video_masks
 from generate_dataset import (
     train_videos, val_videos, test_videos,
     ensure_dirs, process_dataset
@@ -41,12 +41,15 @@ def main():
     for vid in test_test_vids:
         video_paths.append(TEST_VIDEOS_DIR / f"{vid}.mp4")
 
-    # extract frames and generate masks for the 6 selected videos
-    print("--- Extracting Frames and Generating Masks ---")
-    for video_path in video_paths:
-        print(f"\nRunning extraction for {video_path.name}...")
-        process_single_video_frames(video_path)
-        process_single_video_masks(video_path)
+    # extract frames for the 6 selected videos
+    print("--- Extracting frames in parallel ---")
+    with concurrent.futures.ProcessPoolExecutor() as executor:
+        executor.map(process_video_frames, video_paths)
+    
+    # generate motion masks for the 6 selected videos
+    print("--- Generating masks in parallel ---")
+    with concurrent.futures.ProcessPoolExecutor() as executor:
+        executor.map(process_video_frames, video_paths)
 
     # 4. Generate the dataset structure for the selected videos
     print("\n--- Generating Dataset Structure ---")

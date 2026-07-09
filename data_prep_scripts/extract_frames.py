@@ -2,6 +2,7 @@ import cv2
 import os
 import sys
 from pathlib import Path
+import concurrent.futures
 
 # connect to config by adding the parent directory of the current working directory 
 # to the list of paths where Python searches for modules
@@ -47,8 +48,13 @@ def process_video_directory_frames(video_dir: Path):
         print(f"No .mp4 files found in {video_dir}")
         return
     
-    for video_path in video_files:
-        process_video_frames(video_path)
+    # archive: single-threaded implementation
+    # for video_path in video_files:
+    #     process_video_frames(video_path)
+
+    # parallelised implementation
+    with concurrent.futures.ProcessPoolExecutor() as executor:
+        executor.map(process_video_frames, video_files)
 
 def process_single_video_frames(video_path: Path):
     """
@@ -64,12 +70,12 @@ def process_single_video_frames(video_path: Path):
     process_video_frames(video_path)
 
 if __name__ == "__main__":
-    # To test code on a single video first
-    test_video_path = TRAIN_VIDEOS_DIR / "phantom09.mp4"
-    print("--- Testing Single Video ---")
-    process_single_video_frames(test_video_path)
+    # # To test code on a single video first
+    # test_video_path = TRAIN_VIDEOS_DIR / "phantom09.mp4"
+    # print("--- Testing Single Video ---")
+    # process_single_video_frames(test_video_path)
     
-    # print("--- Processing Training Videos ---")
-    # process_video_directory_frames(TRAIN_VIDEOS_DIR)
-    # print("\n--- Processing Test Videos ---")
-    # process_video_directory_frames(TEST_VIDEOS_DIR)
+    print("--- Processing Training Videos ---")
+    process_video_directory_frames(TRAIN_VIDEOS_DIR)
+    print("\n--- Processing Test Videos ---")
+    process_video_directory_frames(TEST_VIDEOS_DIR)

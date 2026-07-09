@@ -3,6 +3,7 @@ import sys
 from collections import deque
 from pathlib import Path
 from motion_mask import FD5_mask
+import concurrent.futures
 
 # connect to config by adding the parent directory of the current working directory 
 # to the list of paths where Python searches for modules
@@ -65,8 +66,13 @@ def process_video_directory_masks(video_dir: Path):
         print(f"No .mp4 files found in {video_dir}")
         return
     
+    # archive: single-threaded implementation
     for video_path in video_files:
         process_video_masks(video_path)
+
+    # parallelised implementation
+    with concurrent.futures.ProcessPoolExecutor() as executor:
+        executor.map(process_video_masks, video_files)
 
 def process_single_video_masks(video_path: Path):
     """
