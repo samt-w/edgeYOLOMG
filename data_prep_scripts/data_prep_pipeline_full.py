@@ -3,7 +3,6 @@
 ## generate_motion_masks.py
 ## generate_dataset.py
 
-from pathlib import Path
 import sys
 import time
 import concurrent.futures
@@ -12,6 +11,7 @@ import concurrent.futures
 sys.path.append('..')
 # Import paths from config
 from config import (
+    RECOMMENDED_CORES,
     TRAIN_VIDEOS_DIR, TEST_VIDEOS_DIR,
     IMAGES_TRAIN_DIR, MASKS_TRAIN_DIR, LABELS_TRAIN_DIR,
     IMAGES_VAL_DIR, MASKS_VAL_DIR, LABELS_VAL_DIR,
@@ -44,14 +44,14 @@ def main():
     # extract frames for the videos
     print("--- Extracting frames in parallel ---")
     frames_start_time = time.time()
-    with concurrent.futures.ProcessPoolExecutor() as executor:
+    with concurrent.futures.ProcessPoolExecutor(max_workers = RECOMMENDED_CORES) as executor:
         executor.map(process_video_frames, video_paths)
     frames_duration = time.time() - frames_start_time
     
     # generate motion masks for the videos
     print("--- Generating masks in parallel ---")
     masks_start_time = time.time()
-    with concurrent.futures.ProcessPoolExecutor() as executor:
+    with concurrent.futures.ProcessPoolExecutor(max_workers = RECOMMENDED_CORES) as executor:
         executor.map(process_video_masks, video_paths)
     masks_duration = time.time() - masks_start_time
 
