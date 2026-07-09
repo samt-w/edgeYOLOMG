@@ -1,10 +1,8 @@
 import os
 import shutil
-import cv2
 import xml.etree.ElementTree as ET
 import random
 import sys
-from pathlib import Path
 # connect to config by adding the parent directory of the current working directory 
 # to the list of paths where Python searches for modules
 sys.path.append('..')
@@ -15,7 +13,6 @@ from config import (
     IMAGES_TRAIN_DIR, MASKS_TRAIN_DIR, LABELS_TRAIN_DIR,
     IMAGES_VAL_DIR, MASKS_VAL_DIR, LABELS_VAL_DIR,
     IMAGES_TEST_DIR, MASKS_TEST_DIR, LABELS_TEST_DIR,
-    PROCESSED_DATA_DIR,
     ARD100_TRAIN_LIST, ARD100_TEST_LIST 
 )
 
@@ -131,6 +128,12 @@ def process_dataset(video_list, img_dest, mask_dest, label_dest):
                     shutil.copy(mask_path, mask_dest / img_name)
                     
                 total_processed += 1
+    
+        # delete intermediate folders from extract_frames.py and generate_motion_masks.py to save disk space
+        if img_dir:
+            shutil.rmtree(img_dir)
+        if mask_dir:
+            shutil.rmtree(mask_dir)
 
     return total_processed, small_num
 
