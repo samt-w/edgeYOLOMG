@@ -3,7 +3,7 @@ import cv2
 import numpy as np
 import time
 
-from yolov5_dualdetector import Yolov5Detector
+from data_prep_scripts.archive.yolov5_dualdetector import Yolov5Detector
 from FD2_mask import FD2_mask
 
 

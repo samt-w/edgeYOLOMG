@@ -1,8 +1,9 @@
-## THIS SCRIPT RUNS A TEST FOR THE FOLLOWING DATA PREPARATION SCRIPTS
+## THIS SCRIPT RUNS THE FULL DATA PREPARATION PIPELINE
 ## extract_frames.py
 ## generate_motion_masks.py
 ## generate_dataset.py
 
+from pathlib import Path
 import sys
 import time
 import concurrent.futures
@@ -28,31 +29,26 @@ from generate_dataset import (
 def main():
     pipeline_start_time = time.time()
 
-    # select 2 videos from each split
-    test_train_vids = train_videos[:2]
-    test_val_vids = val_videos[:2]
-    test_test_vids = test_videos[:2]
-
     video_paths = []
     
     # add training and validation video paths
-    for vid in test_train_vids + test_val_vids:
+    for vid in train_videos + val_videos:
         video_paths.append(TRAIN_VIDEOS_DIR / f"{vid}.mp4")
         
     # add test video paths
-    for vid in test_test_vids:
+    for vid in test_videos:
         video_paths.append(TEST_VIDEOS_DIR / f"{vid}.mp4")
     
     num_videos = len(video_paths)
 
-    # extract frames for the 6 selected videos
+    # extract frames for the videos
     print("--- Extracting frames in parallel ---")
     frames_start_time = time.time()
     with concurrent.futures.ProcessPoolExecutor() as executor:
         executor.map(process_video_frames, video_paths)
     frames_duration = time.time() - frames_start_time
     
-    # generate motion masks for the 6 selected videos
+    # generate motion masks for the videos
     print("--- Generating masks in parallel ---")
     masks_start_time = time.time()
     with concurrent.futures.ProcessPoolExecutor() as executor:
@@ -65,13 +61,13 @@ def main():
     ensure_dirs()
     
     print("Processing Training subset...")
-    process_dataset(test_train_vids, IMAGES_TRAIN_DIR, MASKS_TRAIN_DIR, LABELS_TRAIN_DIR)
+    process_dataset(train_videos, IMAGES_TRAIN_DIR, MASKS_TRAIN_DIR, LABELS_TRAIN_DIR)
     
     print("Processing Validation subset...")
-    process_dataset(test_val_vids, IMAGES_VAL_DIR, MASKS_VAL_DIR, LABELS_VAL_DIR)
+    process_dataset(val_videos, IMAGES_VAL_DIR, MASKS_VAL_DIR, LABELS_VAL_DIR)
     
     print("Processing Test subset...")
-    process_dataset(test_test_vids, IMAGES_TEST_DIR, MASKS_TEST_DIR, LABELS_TEST_DIR)
+    process_dataset(test_videos, IMAGES_TEST_DIR, MASKS_TEST_DIR, LABELS_TEST_DIR)
     dataset_duration = time.time() - dataset_start_time
 
     pipeline_duration = time.time() - pipeline_start_time
