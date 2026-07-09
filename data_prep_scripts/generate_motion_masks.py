@@ -14,7 +14,7 @@ def process_video_masks(video_path: Path):
     This function processes frames and generate masks for a single video
     """
     video_name = video_path.stem
-    print(f"Processing: {video_name}")
+    print(f"Processing motion masks for: {video_name}")
 
     # create an OpenCV VideoCapture object
     cap = cv2.VideoCapture(str(video_path))

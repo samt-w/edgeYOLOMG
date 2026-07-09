@@ -13,7 +13,7 @@ def process_video_frames(video_path: Path):
     This function extracts individual RGB frames from a single video
     """
     video_name = video_path.stem
-    print(f"Processing: {video_name}")
+    print(f"Processing frames from: {video_name}")
 
     # Construct the save path using pathlib
     save_dir = IMAGES_DIR / video_name
