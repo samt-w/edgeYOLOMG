@@ -2,10 +2,15 @@
 import os
 from pathlib import Path
 from dotenv import load_dotenv
+import multiprocessing
 
 load_dotenv()
 
 RANDOM_SEED = 42
+
+total_cores = multiprocessing.cpu_count()
+# setting this so multiprocessing does not use more than 80% of available cores
+RECOMMENDED_CORES = int(total_cores * 0.8)
 
 ### DIRECTORY FILEPATHS FOR DATASETS
 

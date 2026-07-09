@@ -140,11 +140,11 @@ def process_single_video(video_id, img_dest, mask_dest, label_dest):
     return total_processed, small_num
 
 def process_dataset(video_list, img_dest, mask_dest, label_dest):
-    """Distributes video processing across multiple CPU cores."""
+    """Distributes video processing across multiple threads - as this is an I/O-bound task."""
     total_processed = 0
     total_small = 0
     
-    with concurrent.futures.ProcessPoolExecutor() as executor:
+    with concurrent.futures.ThreadPoolExecutor() as executor:
         # itertools.repeat ensures the destination paths are passed to every function call
         results = executor.map(
             process_single_video, 

@@ -67,8 +67,8 @@ def process_video_directory_masks(video_dir: Path):
         return
     
     # archive: single-threaded implementation
-    for video_path in video_files:
-        process_video_masks(video_path)
+    # for video_path in video_files:
+    #     process_video_masks(video_path)
 
     # parallelised implementation
     with concurrent.futures.ProcessPoolExecutor() as executor:
