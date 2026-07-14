@@ -45,8 +45,16 @@ def autobatch(model, imgsz=640, fraction=0.9, batch_size=16):
     LOGGER.info(f'{prefix}{d} ({properties.name}) {t:.2f}G total, {r:.2f}G reserved, {a:.2f}G allocated, {f:.2f}G free')
 
     batch_sizes = [1, 2, 4, 8, 16]
+    # ORIGINAL VERSION OF THIS TRY BLOCK DIDN'T ACCEPT DUAL INPUTS
+    # try:
+    #     img = [torch.zeros(b, 3, imgsz, imgsz) for b in batch_sizes]
+    #     y = profile(img, model, n=3, device=device)
+    # except Exception as e:
+    #     LOGGER.warning(f'{prefix}{e}')
+    # AMENDED VERSION OF THIS BLOCK ACCEPTS THE DUAL INPUTS FOR YOLOMG
     try:
-        img = [torch.zeros(b, 3, imgsz, imgsz) for b in batch_sizes]
+        # Create pairs of [img1, img2] for each batch size
+        img = [[torch.zeros(b, 3, imgsz, imgsz), torch.zeros(b, 3, imgsz, imgsz)] for b in batch_sizes]
         y = profile(img, model, n=3, device=device)
     except Exception as e:
         LOGGER.warning(f'{prefix}{e}')
