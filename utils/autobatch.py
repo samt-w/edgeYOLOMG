@@ -15,7 +15,8 @@ from utils.torch_utils import profile
 
 def check_train_batch_size(model, imgsz=640):
     # Check YOLOv5 training batch size
-    with amp.autocast():
+    cuda = next(model.parameters()).device.type == 'cuda'
+    with torch.amp.autocast('cuda', enabled=cuda):
         return autobatch(deepcopy(model).train(), imgsz)  # compute optimal batch size
 
 
