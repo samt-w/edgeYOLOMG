@@ -32,6 +32,9 @@ config.py sets the global variables as paths for scripts to use
 ```python generate_dataset.py```
 * this is used to generate train/test datasets from the extracted RGB frames and motion masks. It splits the data based on video IDs rather than by random frames.
 
+```python generate_txts.py```
+* this creates the necessary .txt files for the .yaml config for training
+
 ```python3 split_train_val.py --xml_path xx/xxx/Annotations --txt_path xx/xxx/ImageSets/Main```
 * this is used to read the XML annotation files and then split the data into training and validation sets. It then saves the resulting list of filenames into the target directory
 
