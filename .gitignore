@@ -7,3 +7,6 @@ __pycache__/
 
 # Data files
 data_processed_ARD100/
+
+# Model training runs
+runs/
