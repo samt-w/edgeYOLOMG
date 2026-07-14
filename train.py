@@ -313,7 +313,7 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
                     imgs = nn.functional.interpolate(imgs, size=ns, mode='bilinear', align_corners=False)
                     imgs2 = nn.functional.interpolate(imgs2, size=ns2, mode='bilinear', align_corners=False)
             # Forward 
-            with amp.autocast(enabled=cuda):
+            with torch.amp.autocast('cuda', enabled=cuda):
                 pred = model(imgs,imgs2)  
                 # loss
                 loss, loss_items = compute_loss(pred, targets.to(device))  # loss scaled by batch_size
