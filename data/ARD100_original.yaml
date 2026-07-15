@@ -1,0 +1,15 @@
+# INSTRUCTIONS:
+# ensure the data_processed_ARD100 folder is placed in the same root directory 
+# as the YOLO training script
+# then pass the target YAML file to the --data flag
+
+# Train/val/test sets as 1) dir: path/to/imgs, 2) file: path/to/imgs.txt, or 3) list: [path/to/imgs1, path/to/imgs2, ..]
+train: data_processed_ARD100/train.txt
+train2: data_processed_ARD100/train2.txt
+val: data_processed_ARD100/val.txt
+val2: data_processed_ARD100/val2.txt
+test: data_processed_ARD100/test.txt
+test2: data_processed_ARD100/test2.txt
+# Classes
+nc: 1  # number of classes
+names: ['UAV']  # class names
