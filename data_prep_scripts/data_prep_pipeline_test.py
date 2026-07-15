@@ -23,6 +23,7 @@ from generate_dataset import (
     train_videos, val_videos, test_videos,
     ensure_dirs, process_dataset_split
 )
+from generate_txts import generate_all_txts
 
 def main():
     pipeline_start_time = time.time()
@@ -73,6 +74,12 @@ def main():
     process_dataset_split(test_test_vids, TEST_DESTS)
     dataset_duration = time.time() - dataset_start_time
 
+    # generate the .txt files for the YOLO training .yaml files 
+    print("--- Generating YOLO .txt files ---")
+    txt_start_time = time.time()
+    generate_all_txts()
+    txt_duration = time.time() - txt_start_time
+
     pipeline_duration = time.time() - pipeline_start_time
 
     # timing report
@@ -83,6 +90,7 @@ def main():
     print(f"Time to extract frames:     {frames_duration:.2f} seconds")
     print(f"Time to generate masks:     {masks_duration:.2f} seconds")
     print(f"Time to generate dataset:   {dataset_duration:.2f} seconds")
+    print(f"Time to generate txt files: {txt_duration:.2f} seconds")
     print("-" * 20)
     print(f"TOTAL PIPELINE DURATION:    {pipeline_duration:.2f} seconds")
     print("=" * 20)
