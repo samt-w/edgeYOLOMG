@@ -6,24 +6,23 @@
 import os
 import sys
 from pathlib import Path
-from typing import Literal
+
 # connect to config by adding the parent directory of the current working directory 
 # to the list of paths where Python searches for modules
 sys.path.append('..')
-# Import paths from config
+# import paths from config
 from config import (
     PROCESSED_DATA_DIR,
-    IMAGES_TRAIN_DIR, MASKS_TRAIN_DIR, LABELS_TRAIN_DIR,
-    IMAGES_VAL_DIR, MASKS_VAL_DIR, LABELS_VAL_DIR,
-    IMAGES_TEST_DIR, MASKS_TEST_DIR, LABELS_TEST_DIR
+    TRAIN_DESTS, VAL_DESTS, TEST_DESTS
 )
 
 def generate_txt(
-        split_name: Literal["train", "val", "test"],
+        split_name: str,
         rgb_dir, 
         mask_dir,
         label_dir,
-        output_dir
+        output_dir,
+        suffix: str = ""
     ):
     """
     This function generates .txt files for bimodal YOLO training
@@ -35,11 +34,12 @@ def generate_txt(
     output_dir = Path(output_dir)
 
     # YOLO convention is to store the .txt files at the dataset root folder
-    rgb_txt_path = output_dir / f"{split_name}.txt"
-    mask_txt_path = output_dir / f"{split_name}2.txt"
+    # Add the resolution suffix to prevent overwriting
+    rgb_txt_path = output_dir / f"{split_name}{suffix}.txt"
+    mask_txt_path = output_dir / f"{split_name}2{suffix}.txt"
 
     # sort the images to ensure deterministic output
-    rgb_images = sorted([file for file in os.listdir(rgb_dir) if file.endswith((".jpg"))])
+    rgb_images = sorted([file for file in os.listdir(rgb_dir) if file.endswith(".jpg")])
     matched_count = 0
 
     with open(rgb_txt_path, "w") as file_rgb, open(mask_txt_path, "w") as file_mask:
@@ -58,27 +58,39 @@ def generate_txt(
                 matched_count += 1
             else:
                 if not mask_path.exists():
-                    print(f"[{split_name.upper()}] Missing mask for {rgb_img}. Skipping.")
+                    print(f"[{split_name.upper()}{suffix}] Missing mask for {rgb_img}. Skipping.")
                 if not label_path.exists():
-                    print(f"[{split_name.upper()}] Missing label for {rgb_img}. Skipping.")
+                    print(f"[{split_name.upper()}{suffix}] Missing label for {rgb_img}. Skipping.")
 
-    print(f"[{split_name.upper()}] complete. Wrote {matched_count} three-way matches to:")
+    print(f"[{split_name.upper()}{suffix}] complete. Wrote {matched_count} three-way matches to:")
     print(f" - {rgb_txt_path}")
     print(f" - {mask_txt_path}\n")
 
-if __name__ == "__main__":
+def generate_all_txts():
+    """Wrapper to process all splits and image resolutions"""
     # YOLO convention is to store the .txt files at the dataset root folder
     dataset_root = Path(PROCESSED_DATA_DIR)
     
+    # map the dictionary keys to the desired filename suffixes
+    res_map = {
+        'orig': '',
+        '1280': '_1280',
+        '640': '_640'
+    }
+
     splits = [
-        ('train', IMAGES_TRAIN_DIR, MASKS_TRAIN_DIR, LABELS_TRAIN_DIR),
-        ('val', IMAGES_VAL_DIR, MASKS_VAL_DIR, LABELS_VAL_DIR),
-        ('test', IMAGES_TEST_DIR, MASKS_TEST_DIR, LABELS_TEST_DIR)
+        ('train', TRAIN_DESTS),
+        ('val', VAL_DESTS),
+        ('test', TEST_DESTS)
     ]
 
-    for split_name, rgb_dir, mask_dir, label_dir in splits:
-        # Check if the directories exist before processing to avoid errors on missing splits
-        if Path(rgb_dir).exists():
-            generate_txt(split_name, rgb_dir, mask_dir, label_dir, dataset_root)
-        else:
-            print(f"Skipping '{split_name}' split: Directory {rgb_dir} does not exist.")
+    for split_name, dest_dict in splits:
+        for res_key, (rgb_dir, mask_dir, label_dir) in dest_dict.items():
+            suffix = res_map[res_key]
+            if Path(rgb_dir).exists():
+                generate_txt(split_name, rgb_dir, mask_dir, label_dir, dataset_root, suffix)
+            else:
+                print(f"Skipping '{split_name}' {res_key}: Directory {rgb_dir} does not exist.")
+
+if __name__ == "__main__":
+    generate_all_txts()
