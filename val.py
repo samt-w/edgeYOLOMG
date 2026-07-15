@@ -190,7 +190,14 @@ def run(data,
         pad = 0.0 if task in ('speed', 'benchmark') else 0.5
         rect = False if task == 'benchmark' else pt  # square inference for benchmarks
         task = task if task in ('train', 'val', 'test') else 'val'  # path to train/val/test images
-        task2 = task2 if task2 in ('train2', 'val2', 'test') else 'val2'  # path to train/val/test images
+        # original task2 code contained error - did not return correct data path
+        # task2 = task2 if task2 in ('train2', 'val2', 'test') else 'val2'  # path to train/val/test masks
+        if task == 'test':
+            task2 = 'test2'
+        elif task == 'train':
+            task2 = 'train2'
+        else:
+            task2 = 'val2'
         dataloader = create_dataloader(data[task],data[task2],imgsz, batch_size, stride, single_cls, pad=pad, rect=rect,
                                        workers=workers, prefix=colorstr(f'{task}: '))[0]
 #2.1 初始化测试需要的参数
