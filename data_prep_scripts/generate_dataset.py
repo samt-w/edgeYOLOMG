@@ -171,7 +171,8 @@ def process_single_video(video_id, dest_paths):
         img_1280, ratio_1280, pad_1280 = letterbox(img, new_shape=(1280, 1280), auto=False)
         cv2.imwrite(str(dest_1280[0] / img_name), img_1280)
         if mask is not None:
-            mask_1280, _, _ = letterbox(mask, new_shape=(1280, 1280), auto=False)
+            # setting color=(0, 0, 0) so the padding is black (i.e. "no motion") for the motion mask
+            mask_1280, _, _ = letterbox(mask, new_shape=(1280, 1280), auto=False, color=(0, 0, 0))
             cv2.imwrite(str(dest_1280[1] / img_name), mask_1280)
 
         labels_1280 = []
@@ -186,7 +187,8 @@ def process_single_video(video_id, dest_paths):
         img_640, ratio_640, pad_640 = letterbox(img, new_shape=(640, 640), auto=False)
         cv2.imwrite(str(dest_640[0] / img_name), img_640)
         if mask is not None:
-            mask_640, _, _ = letterbox(mask, new_shape=(640, 640), auto=False)
+            # setting color=(0, 0, 0) so the padding is black (i.e. "no motion") for the motion mask
+            mask_640, _, _ = letterbox(mask, new_shape=(640, 640), auto=False, color=(0, 0, 0))
             cv2.imwrite(str(dest_640[1] / img_name), mask_640)
 
         labels_640 = []
