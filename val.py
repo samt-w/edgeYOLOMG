@@ -198,8 +198,16 @@ def run(data,
             task2 = 'train2'
         else:
             task2 = 'val2'
+        
+        # extract directory names from .yaml
+        img_dir = data.get('img_dir', 'images')
+        mask_dir = data.get('mask_dir', 'images2')
+        label_dir = data.get('label_dir', 'labels')
+
+        # pass extracted names to the dataloader        
         dataloader = create_dataloader(data[task],data[task2],imgsz, batch_size, stride, single_cls, pad=pad, rect=rect,
-                                       workers=workers, prefix=colorstr(f'{task}: '))[0]
+                                       workers=workers, prefix=colorstr(f'{task}: '),
+                                       img_dir=img_dir, mask_dir=mask_dir, label_dir=label_dir)[0]
 #2.1 初始化测试需要的参数
     seen = 0 # 初始化测试的图片的数量
     confusion_matrix = ConfusionMatrix(nc=nc) ## 初始化混淆矩阵

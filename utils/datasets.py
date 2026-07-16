@@ -179,7 +179,8 @@ def exif_transpose(image):
 #↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓
 
 def create_dataloader(path,path2,imgsz, batch_size, stride, single_cls=False, hyp=None, augment=False, cache=False, pad=0.0,
-                      rect=False, rank=-1, workers=8, image_weights=False, quad=False, prefix='',prefix2='', shuffle=False):
+                      rect=False, rank=-1, workers=8, image_weights=False, quad=False, prefix='',prefix2='', shuffle=False,
+                      img_dir='images', mask_dir='images2', label_dir='labels'):
     if rect and shuffle:
         LOGGER.warning('WARNING: --rect is incompatible with DataLoader shuffle, setting shuffle=False')
         shuffle = False
@@ -195,7 +196,10 @@ def create_dataloader(path,path2,imgsz, batch_size, stride, single_cls=False, hy
                                       pad=pad,
                                       image_weights=image_weights,
                                       prefix=prefix,
-                                      prefix2=prefix2)
+                                      prefix2=prefix2,
+                                      img_dir=img_dir, 
+                                      mask_dir=mask_dir, 
+                                      label_dir=label_dir)
     batch_size = min(batch_size, len(dataset))
     nd = torch.cuda.device_count()  # number of CUDA devices
     nw = min([os.cpu_count() // max(nd, 1), batch_size if batch_size > 1 else 0, workers])  # number of workers
@@ -335,16 +339,24 @@ def verify_image_label(args):
         nc = 1
         msg = f'{prefix}WARNING: {im_file}: ignoring corrupt image/label: {e}'
         return [None, None, None, None, nm, nf, ne, nc, msg]
-            
-def img2label_paths(img_paths):
-    # Define label paths as a function of image paths
-    sa, sb = os.sep + 'images' + os.sep, os.sep + 'labels' + os.sep  # /images/, /labels/ substrings
+
+# this code was hardcoded to the original researcher's file paths and needed refactoring         
+# def img2label_paths(img_paths):
+#     # Define label paths as a function of image paths
+#     sa, sb = os.sep + 'images' + os.sep, os.sep + 'labels' + os.sep  # /images/, /labels/ substrings
+#     return [sb.join(x.rsplit(sa, 1)).rsplit('.', 1)[0] + '.txt' for x in img_paths]
+# def img2label_paths2(img_paths):
+#     # Define label paths as a function of image paths
+#     sa, sb = os.sep + 'images2' + os.sep, os.sep + 'labels' + os.sep  # /images/, /labels/ substrings
+#     return [sb.join(x.rsplit(sa, 1)).rsplit('.', 1)[0] + '.txt' for x in img_paths]
+
+def img2label_paths(img_paths, source_dir, label_dir):
+    # Define label paths by dynamically replacing source_dir with label_dir
+    sa, sb = os.sep + source_dir + os.sep, os.sep + label_dir + os.sep
     return [sb.join(x.rsplit(sa, 1)).rsplit('.', 1)[0] + '.txt' for x in img_paths]
-def img2label_paths2(img_paths):
-    # Define label paths as a function of image paths
-    sa, sb = os.sep + 'images2' + os.sep, os.sep + 'labels' + os.sep  # /images/, /labels/ substrings
-    return [sb.join(x.rsplit(sa, 1)).rsplit('.', 1)[0] + '.txt' for x in img_paths]
-def get_cache(path,mode,prefix):
+
+# amending get_cache() to enable the dynamic img2label_paths() function
+def get_cache(path, prefix, source_dir, label_dir):
     prefix=prefix
     cache_version = 0.6  # dataset labels *.cache version
     try:
@@ -369,10 +381,16 @@ def get_cache(path,mode,prefix):
         assert im_files, f'{prefix}No images found'
     except Exception as e:
         raise Exception(f'{prefix}Error loading data from {path}: {e}\nSee {HELP_URL}')
-    if mode==1:
-        label_files = img2label_paths(im_files)  # 获取labels
-    elif mode==2:
-        label_files = img2label_paths2(im_files)  # 获取labels
+    
+    # old researcher code, commenting out to enable dynamic path generation
+    # if mode==1:
+    #     label_files = img2label_paths(im_files)  # 获取labels
+    # elif mode==2:
+    #     label_files = img2label_paths2(im_files)  # 获取labels
+    
+    # dynamically generate labels using the passed directories
+    label_files = img2label_paths(im_files, source_dir, label_dir)
+
     cache_path = (p if p.is_file() else Path(label_files[0]).parent).with_suffix('.cache')
     try:
         cache, exists = np.load(cache_path, allow_pickle=True).item(), True  # load dict
@@ -396,7 +414,8 @@ class LoadImagesAndLabels(Dataset):
     
 
     def __init__(self, path, path2, img_size=640, batch_size=16, augment=False, hyp=None, rect=False, image_weights=False,
-                 cache_images=False, single_cls=False, stride=32, pad=0.0, prefix='',prefix2=''):
+                 cache_images=False, single_cls=False, stride=32, pad=0.0, prefix='',prefix2='',
+                 img_dir='images', mask_dir='images2', label_dir='labels'):
         #创建参数
         self.img_size = img_size
         self.augment = augment #是否数据增强
@@ -412,15 +431,20 @@ class LoadImagesAndLabels(Dataset):
         self.albumentations = Albumentations() if augment else None
         self.prefix=prefix
         self.prefix2=prefix2
-        cache = get_cache(self.path,1,self.prefix)
-        cache2 = get_cache(self.path2,2,self.prefix2)
+        # amending these two lines to pass directories dynamically
+        # cache = get_cache(self.path,1,self.prefix)
+        # cache2 = get_cache(self.path2,2,self.prefix2)
+        cache = get_cache(self.path, self.prefix, source_dir=img_dir, label_dir=label_dir)
+        cache2 = get_cache(self.path2, self.prefix2, source_dir=mask_dir, label_dir=label_dir)
         # Read cache
         [cache.pop(k) for k in ('hash', 'version', 'msgs')]  # remove items
         labels, shapes, self.segments = zip(*cache.values())
         self.labels = list(labels)
         self.shapes = np.array(shapes, dtype=np.float64)
         self.im_files = list(cache.keys())  # update 图片列表
-        self.label_files = img2label_paths(cache.keys())  # update 标签列表
+        # updating this line to create label paths dynamically
+        # self.label_files = img2label_paths(cache.keys())  # update 标签列表
+        self.label_files = img2label_paths(cache.keys(), img_dir, label_dir)
         n = len(shapes)  # number of images 14329
         bi = np.floor(np.arange(n) / batch_size).astype(np.int_)  # batch index 将每一张图片batch索引
         nb = bi[-1] + 1  # number of batches
@@ -433,7 +457,9 @@ class LoadImagesAndLabels(Dataset):
         self.labels2 = list(labels2)
         self.shapes2 = np.array(shapes2, dtype=np.float64)
         self.im_files2 = list(cache2.keys())  # update 图片列表
-        self.label_files2 = img2label_paths(cache2.keys())  # update 标签列表
+        # updating this line to create label paths dynamically
+        # self.label_files2 = img2label_paths(cache2.keys())  # update 标签列表
+        self.label_files2 = img2label_paths(cache2.keys(), mask_dir, label_dir)
         n2 = len(shapes2)  # number of images 14329
         bi2 = np.floor(np.arange(n2) / batch_size).astype(np.int_)  # batch index 将每一张图片batch索引
         nb2 = bi2[-1] + 1  # number of batches

@@ -10,6 +10,12 @@ val: data_processed_ARD100/val.txt
 val2: data_processed_ARD100/val2.txt
 test: data_processed_ARD100/test.txt
 test2: data_processed_ARD100/test2.txt
+
 # Classes
 nc: 1  # number of classes
 names: ['UAV']  # class names
+
+# specifying the image/mask/label directories for the YOLO dataloader
+img_dir: images
+mask_dir: masks
+label_dir: labels

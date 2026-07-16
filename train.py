@@ -102,6 +102,10 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
 
     train_path,train_path2,val_path,val_path2 = data_dict['train'],data_dict['train2'], data_dict['val'], data_dict['val2']
 
+    img_dir = data_dict.get('img_dir', 'images')
+    mask_dir = data_dict.get('mask_dir', 'images2')
+    label_dir = data_dict.get('label_dir', 'labels')
+
     nc = 1 if single_cls else int(data_dict['nc'])  # number of classes
     names = ['item'] if single_cls and len(data_dict['names']) != 1 else data_dict['names']  # class names
 
@@ -210,7 +214,8 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
                                               hyp=hyp, augment=True, cache=None if opt.cache == 'val' else opt.cache,
                                               rect=opt.rect, rank=LOCAL_RANK, workers=workers,
                                               image_weights=opt.image_weights, quad=opt.quad,
-                                              prefix=colorstr('train: '),prefix2=colorstr('train2: '), shuffle=True)
+                                              prefix=colorstr('train: '),prefix2=colorstr('train2: '), shuffle=True,
+                                              img_dir=img_dir, mask_dir=mask_dir, label_dir=label_dir)
     #mlc = int(np.concatenate(dataset.labels, 0)[:, 0].max())  # max label class
     nb = len(train_loader)  # number of batches
     #assert mlc < nc, f'Label class {mlc} exceeds nc={nc} in {data}. Possible class labels are 0-{nc - 1}'
@@ -220,7 +225,8 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
         val_loader = create_dataloader(val_path,val_path2, imgsz, batch_size // WORLD_SIZE * 1, gs, single_cls,
                                        hyp=hyp, cache=None if noval else opt.cache,
                                        rect=True, rank=-1, workers=workers * 2, pad=0.5,
-                                       prefix=colorstr('val: '),prefix2=colorstr('val2: '))[0]
+                                       prefix=colorstr('val: '),prefix2=colorstr('val2: '),
+                                       img_dir=img_dir, mask_dir=mask_dir, label_dir=label_dir)[0]
 
         if not resume:
             labels = np.concatenate(dataset.labels, 0)
@@ -361,7 +367,7 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
             if not noval or final_epoch:  # Calculate mAP
                 print('batch_size: ', batch_size)
                 results, maps, _ = val.run(data_dict,
-                                           batch_size=batch_size // WORLD_SIZE * 0.25,
+                                           batch_size=batch_size // WORLD_SIZE,
                                            imgsz=imgsz,
                                            model=ema.ema,
                                            single_cls=single_cls,
