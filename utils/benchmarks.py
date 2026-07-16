@@ -38,7 +38,7 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))  # add ROOT to PATH
 # ROOT = ROOT.relative_to(Path.cwd())  # relative
 
-import export
+import edge.export as export
 import val
 from utils import notebook_init
 from utils.general import LOGGER, print_args
