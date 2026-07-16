@@ -13,10 +13,12 @@ The dataset is the ARD100 dataset, created by the original researchers, which ca
 
 # Repo Structure
 
-YOLOMG/  
+YOLOMG-STW/   
+├── cloud/                     # scripts for running training in cloud  
+├── data/                      # scripts with model training data filepaths  
 ├── data_prep_scripts/         # scripts for generating and formatting the dataset  
+├── edge/                      # scripts for exporting .pt models and running inference on edge device  
 ├── models/                    # network architecture .yaml documents and core PyTorch modules  
-├── test_code/                 # scripts for creating RGB frames and motion masks from videos  
 └── utils/                     # core dependencies for YOLO model, such as dataloaders, loss functions, and metrics  
 
 .env.sanitised contains the global variables that need to be completed by the user in order to run the code  
