@@ -174,7 +174,7 @@ def visual_check():
                     cv2.rectangle(img, (int(xmin), int(ymin)), (int(xmax), int(ymax)), (0, 255, 0), 2)
                 cv2.imwrite(str(out_dir / f"{base}_rgb.jpg"), img)
 
-            # Draw on Motion Mask (Update .jpg to .png if necessary)
+            # Draw on Motion Mask
             mask_path = paths["masks"] / f"{base}.jpg" 
             mask = cv2.imread(str(mask_path))
             if mask is not None:
