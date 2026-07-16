@@ -212,7 +212,8 @@ def run(data,
     seen = 0 # 初始化测试的图片的数量
     confusion_matrix = ConfusionMatrix(nc=nc) ## 初始化混淆矩阵
     # 获取数据集所有类别的类名
-    names = {k: v for k, v in enumerate(model.names if hasattr(model, 'names') else model.module.names)}
+    # amending to fix validation labelling bug when no correct predictions are found
+    names = dict(enumerate(model.names if hasattr(model, 'names') else model.module.names))
     # 获取coco数据集的类别索引
     class_map = coco80_to_coco91_class() if is_coco else list(range(1000))
     # 设置tqdm进度条的显示信息
@@ -308,7 +309,7 @@ def run(data,
             # 保存预测信息到image_name.txt文件
             # Save/log
             if save_txt:
-                save_one_txt(predn, save_conf, shape, file=save_dir / 'labels' / (path.stem + '.txt'))
+                save_one_txt(predn, save_conf, shape, file=save_dir / 'labels' / f'{path.stem}.txt')
             if save_json:
                 save_one_json(predn, jdict, path, class_map)  # append to COCO-JSON dictionary
             callbacks.run('on_val_image_end', pred, predn, path, names, im[si])
@@ -341,10 +342,8 @@ def run(data,
         # map50: [1] 所有类别的平均mAP@0.5
         # map: [1] 所有类别的平均mAP@0.5:0.95
         mp, mr, map50, map = p.mean(), r.mean(), ap50.mean(), ap.mean()
-        # nt: [nc] 统计出整个数据集的gt框中数据集各个类别的个数
-        nt = np.bincount(stats[3].astype(np.int64), minlength=nc)  # number of targets per class
-    else:
-        nt = torch.zeros(1)
+    # nt: [nc] 统计出整个数据集的gt框中数据集各个类别的个数
+    nt = np.bincount(stats[3].astype(np.int64), minlength=nc) if len(stats) else torch.zeros(1)
 # 4.2 打印结果
 #——————————————————————————————————————————————————————————————————————
     # Print results
