@@ -4,6 +4,7 @@ import os
 import random
 import sys
 import time
+import config
 
 from copy import deepcopy
 from datetime import datetime
@@ -24,6 +25,17 @@ ROOT = FILE.parents[0]  # YOLOv5 root directory
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))  # add ROOT to PATH
 ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
+
+# ClearML MLOps configuration
+from clearml import Task
+
+# initialise ClearML (authenticating using .env credentials)
+task = Task.init(
+    project_name = "YOLOMG-STW", 
+    task_name = "YOLOMG-STW-training",
+    # ensure trained model weights are saved to ClearML cloud
+    output_uri = True
+)
 
 import val  # for end-of-epoch mAP
 from models.experimental import attempt_load
