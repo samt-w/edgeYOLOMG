@@ -5,15 +5,15 @@ target directories are typically: ./annotations/<video_name>/<video_frame>.xml
 """
 import os
 from collections import Counter
+import concurrent.futures
 import pandas as pd
+import matplotlib.pyplot as plt
 import xml.etree.ElementTree as ET
 # annotations filepath
-from config import ANNOTATIONS_DIR
+from config import ANNOTATIONS_DIR, RECOMMENDED_CORES
 
-def pascal_voc_object_count(parent_folder: str) -> tuple:
-    # review all .xml files in the subfolders of a given folder, and return two dictionaries:
-    # - one with number of objects in each .xml frame in the directory
-    # - one with number of objects in each class across entire dataset
+def process_single_folder(folder_path: str) -> tuple:
+    # worker function to process .xml files in a single folder
     
     # initialise counters
     frame_object_counts = Counter({"None": 0,
@@ -21,26 +21,16 @@ def pascal_voc_object_count(parent_folder: str) -> tuple:
                                    "Multiple Objects": 0})
     class_counts = Counter()
 
-    folder_count = 0
-    
-    # iterate through folders:
-    for item in os.scandir(parent_folder):
-        # skip anything that isn't a folder
-        if not item.is_dir():
+    # iterate through files in the folder
+    for file in os.scandir(folder_path):
+        # skip any non-XML files
+        if not file.name.endswith(".xml"):
             continue
 
-        folder_count += 1
-        print(f"extracting objects from files in folder {folder_count} / 100.")
-
-        # iterate through files in the folder
-        for file in os.scandir(item.path):
-            # skip any non-XML files
-            if not file.name.endswith(".xml"):
-                continue
-
+        try:
             # parse XML and extract object names:
             tree = ET.parse(file.path)
-            frame_objects = [object.findtext("name") for object in tree.iter("object")]
+            frame_objects = [obj.findtext("name") for obj in tree.iter("object")]
 
             # update object counts
             num_objects = len(frame_objects)
@@ -50,15 +40,38 @@ def pascal_voc_object_count(parent_folder: str) -> tuple:
                 frame_object_counts["Single Object"] += 1
             else:
                 frame_object_counts["Multiple Objects"] += 1
-
-            # update dataset class counts
+            
             class_counts.update(frame_objects)
         
-        print(f"After folder {folder_count} / 100, counts are:")
-        print("Frame Counts:", frame_object_counts)
-        print("Class Counts:", class_counts) 
+        except ET.ParseError:
+            # ignore corrupted/empty XML files
+            pass
     
-    return dict(frame_object_counts), dict(class_counts)
+    return frame_object_counts, class_counts
+
+def pascal_voc_object_count(parent_folder: str) -> tuple:
+    # review all .xml files in the subfolders of a given folder, and return two dictionaries:
+    # - one with number of objects in each .xml frame in the directory
+    # - one with number of objects in each class across entire dataset
+    
+    # initialise counters
+    total_frame_object_counts = Counter({"None": 0,
+                                   "Single Object": 0,
+                                   "Multiple Objects": 0})
+    total_class_counts = Counter()
+    
+    # generate list of folder paths
+    folders = [folder.path for folder in os.scandir(parent_folder) if folder.is_dir()]
+    
+    # distribute folders across multiple processes
+    with concurrent.futures.ProcessPoolExecutor(max_workers = RECOMMENDED_CORES) as executor:
+        results = executor.map(process_single_folder, folders)
+        # aggregate results across all workers
+        for folder_frame_object_counts, folder_class_counts in results:
+            total_frame_object_counts.update(folder_frame_object_counts)
+            total_class_counts.update(folder_class_counts)
+    
+    return dict(total_frame_object_counts), dict(total_class_counts)
 
 if __name__ == "__main__":
     object_count_dict, object_class_count_dict = pascal_voc_object_count(ANNOTATIONS_DIR)
@@ -66,11 +79,13 @@ if __name__ == "__main__":
     print("Frame Counts:", object_count_dict)
     print("Class Counts:", object_class_count_dict)
 
-    # # initialise data
-    # data = []
-
-    # # initialise data as pandas df
-    # df = pd.DataFrame(data)
+    # Convert to DataFrames, orienting keys as the index
+    frame_object_count_df = pd.DataFrame.from_dict(object_count_dict, orient='index', columns=['Count'])
+    object_class_count_df = pd.DataFrame.from_dict(object_class_count_dict, orient='index', columns=['Count'])
     
-    # # visualise pandas dataframe e.g. with df.hist()
-    # histogram = df.hist()
+    # Visualise categorical data using bar charts
+    frame_object_count_df.plot.bar(title="Number of objects in each Frame")
+    object_class_count_df.plot.bar(title="Total Class Counts")
+    
+    # Display the plots
+    plt.show()
