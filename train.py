@@ -34,8 +34,8 @@ from clearml import Task
 task = Task.init(
     project_name = "YOLOMG-STW", 
     task_name = "YOLOMG-STW-training",
-    # ensure trained model weights are saved to ClearML cloud
-    output_uri = True
+    # don't need intermediate model weights to be saved to ClearML cloud
+    output_uri = False
 )
 
 import val  # for end-of-epoch mAP
@@ -382,8 +382,16 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
                 
                 # step the profiler at the end of each batch
                 prof.step()
+                
+                # adding a break for tensorboard debugging purposes
+                if i == 9:
+                    break
                 # end batch ------------------------------------------------------------------------------------------------
 
+            # adding a break for tensorboard debugging purposes
+                if i == 9:
+                    break
+            
             # Scheduler
             lr = [x['lr'] for x in optimizer.param_groups]  # for loggers
             scheduler.step()                                                                                           
@@ -482,7 +490,13 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
     # instruct ClearML to upload the profiler's TensorBoard .json output 
     task.upload_artifact(
         name = f"Profiler_Logs_{save_dir.name}", 
-        artifact_object = str(save_dir / 'profiler_logs')
+        artifact_object = str(save_dir / 'profiler_logs'),
+    )
+
+    # instruct ClearML to upload final .pt weights
+    task.upload_artifact(
+        name = "best_model",
+        artifact_object = str(best),
     )
 
     return results
@@ -682,3 +696,5 @@ def run(**kwargs):
 if __name__ == "__main__":
     opt = parse_opt()
     main(opt)
+    # force ClearML to sync and shut down before script ends
+    task.close()
