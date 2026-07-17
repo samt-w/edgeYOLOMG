@@ -16,7 +16,6 @@ import torch.distributed as dist
 import torch.nn as nn
 import torch.profiler
 import yaml
-from torch.cuda import amp
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim import SGD, Adam, AdamW, lr_scheduler
 from tqdm import tqdm
@@ -277,7 +276,7 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
     maps = np.zeros(nc)  # mAP per class
     results = (0, 0, 0, 0, 0, 0, 0)  # P, R, mAP@.5, mAP@.5-.95, val_loss(box, obj, cls)
     scheduler.last_epoch = start_epoch - 1  # do not move
-    scaler = amp.GradScaler(enabled=cuda)
+    scaler = torch.amp.GradScaler('cuda', enabled=cuda)
     stopper = EarlyStopping(patience=opt.patience)
     compute_loss = ComputeLoss(model)  # init loss class
     LOGGER.info(f'Image sizes {imgsz} train, {imgsz} val\n'
@@ -382,15 +381,6 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
                 
                 # step the profiler at the end of each batch
                 prof.step()
-                
-                # adding a break for tensorboard debugging purposes
-                if i == 9:
-                    break
-                # end batch ------------------------------------------------------------------------------------------------
-
-            # adding a break for tensorboard debugging purposes
-                if i == 9:
-                    break
             
             # Scheduler
             lr = [x['lr'] for x in optimizer.param_groups]  # for loggers
