@@ -4,6 +4,8 @@ env/
 .env
 __pycache__/
 *.pyc
+pyproject.toml
+YOLOMG_STW.egg-info/
 
 # Data files
 data_processed_ARD100/
