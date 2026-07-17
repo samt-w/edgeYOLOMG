@@ -3,7 +3,7 @@ code for visualising the class count across the target dataset - assuming labels
 
 script also saves class count data in a dynamically named directory at same root as script
 
-target directories are typically: ./<dataset_name>/annotations/<video_name>/<video_frame>.xml
+target dataset directories are typically: ./<dataset_name>/annotations/<video_name>/<video_frame>.xml
 """
 import os
 from collections import Counter
