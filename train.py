@@ -287,12 +287,16 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
 
     # add profiler to the epochs
     with torch.profiler.profile(
-        activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA],
-        schedule=torch.profiler.schedule(skip_first=2, wait=2, warmup=1, active=2, repeat=1),
-        on_trace_ready=torch.profiler.tensorboard_trace_handler('./runs/train/profiler_logs'),
-        record_shapes=True,
-        profile_memory=True,
-        with_flops=True
+        activities = [torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA],
+        schedule = torch.profiler.schedule(skip_first = 2,
+                                           wait = 2,
+                                           warmup = 1,
+                                           active = 2,
+                                           repeat = 1),
+        on_trace_ready = torch.profiler.tensorboard_trace_handler(str(save_dir / 'profiler_logs')),
+        record_shapes = True,
+        profile_memory = True,
+        with_flops = True
     ) as prof:
         for epoch in range(start_epoch, epochs):  # epoch ------------------------------------------------------------------
             model.train()
@@ -473,7 +477,14 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
         callbacks.run('on_train_end', last, best, plots, epoch, results)
         LOGGER.info(f"Results saved to {colorstr('bold', save_dir)}")
 
-    torch.cuda.empty_cache() 
+    torch.cuda.empty_cache()
+
+    # instruct ClearML to upload the profiler's TensorBoard .json output 
+    task.upload_artifact(
+        name = f"Profiler_Logs_{save_dir.name}", 
+        artifact_object = str(save_dir / 'profiler_logs')
+    )
+
     return results
 
 def parse_opt(known=False):
