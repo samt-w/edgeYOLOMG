@@ -414,6 +414,32 @@ def run(data,
     # maps: [80] 所有类别的mAP@0.5:0.95
     # t: {tuple: 3} 0: 打印前向传播耗费的总时间   1: nms耗费总时间   2: 总时间
     # 将数据返回train.py    results map
+    
+    ### ClearML logging
+    from clearml import Task
+    
+    # get active task (from train.py or val.py)
+    current_task = Task.current_task()
+
+    if current_task and plots:
+        logger = current_task.get_logger()
+        # save prediction batch images that val.py saved in Section 3
+        for img_path in save_dir.glob("val_batch*.jpg"):
+            logger.report_image(
+                title = "Validation Batches",
+                series = img_path.stem,
+                iteration = 0,
+                local_path = str(img_path)
+            )
+        # save loss curves and confusion matrix
+        for plot_path in save_dir.glob("*.png"):
+            logger.report_image(
+                title = "Validation Metrics",
+                series = plot_path.stem,
+                iteration = 0,
+                local_path = str(plot_path)
+            )
+    
     return (mp, mr, map50, map, *(loss.cpu() / len(dataloader)).tolist()), maps, t
 
     """
@@ -507,5 +533,19 @@ def main(opt):
 
 
 if __name__ == "__main__":
+    from clearml import Task
+    from datetime import datetime
+    import config
+
+    run_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    task = Task.init(
+        project_name="YOLOMG-STW",
+        task_name=f"YOLOMG-STW-validation_{run_time}",
+        reuse_last_task_id=False
+    )
+    
     opt = parse_opt()
     main(opt)
+    
+    task.close()

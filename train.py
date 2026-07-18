@@ -28,13 +28,17 @@ ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
 
 # ClearML MLOps configuration
 from clearml import Task
+from datetime import datetime
+
+run_time = datetime.now().strftime("%Y%m%d_%H%M%S")
 
 # initialise ClearML (authenticating using .env credentials)
 task = Task.init(
     project_name = "YOLOMG-STW", 
-    task_name = "YOLOMG-STW-training",
+    task_name = f"YOLOMG-STW-training_{run_time}",
     # don't need intermediate model weights to be saved to ClearML cloud
-    output_uri = False
+    output_uri = False,
+    reuse_last_task_id=False
 )
 
 import val  # for end-of-epoch mAP
