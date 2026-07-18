@@ -1,0 +1,15 @@
+[project]
+name = "YOLOMG-STW"
+version = "0.1.0"
+description = "adapted YOLOv5 algorithm for drone detection"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+
+[tool.setuptools]
+# List standalone Python scripts at root directory
+py-modules = ["config", "sync_env", "train", "val"]
+
+[tool.setuptools.packages.find]
+# List the folders that actually contain Python modules
+include = ["cloud*", "data*", "data_prep_scripts*", "edge*", "models*", "utils*"]

@@ -4,7 +4,6 @@ env/
 .env
 __pycache__/
 *.pyc
-pyproject.toml
 YOLOMG_STW.egg-info/
 
 # Data files
