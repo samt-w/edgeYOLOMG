@@ -7,7 +7,7 @@
 
 # Base ----------------------------------------
 matplotlib>=3.4.3
-numpy>=1.18.5
+numpy>=1.18.5,<2.0.0 # for pandas compatibility
 pandas==1.5.3
 opencv-python>=4.4.0.46
 Pillow>=7.1.2
