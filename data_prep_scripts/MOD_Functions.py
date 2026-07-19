@@ -317,11 +317,22 @@ def motion_compensate(frame1, frame2):
         translate_y.append(translate_y0)
         # mask0 = cv2.line(mask0, (int(a), int(b)), (int(c), int(d)), color[i].tolist(), 3)
         # cv2.circle(frame2, (int(a), int(b)), 3, color[i].tolist(), -1)
-    motion_dist = np.array(motion_distance)
-    motion_x = np.mean(np.array(translate_x))
-    motion_y = np.mean(np.array(translate_y))
+    # ----------------------------------------------
+    # # old code results in an error when an empty array is passed
+    # motion_dist = np.array(motion_distance)
+    # motion_x = np.mean(np.array(translate_x))
+    # motion_y = np.mean(np.array(translate_y))
 
-    avg_dst = np.mean(motion_dist)
+    # avg_dst = np.mean(motion_dist)
+    # ----------------------------------------------
+    # new code: if no points survived the distance filter, default to 0
+    if len(translate_x) == 0:
+        motion_x, motion_y, avg_dst = 0.0, 0.0, 0.0
+    else:
+        motion_x = np.mean(np.array(translate_x))
+        motion_y = np.mean(np.array(translate_y))
+        avg_dst = np.mean(np.array(motion_distance))
+    # ----------------------------------------------
 
     # points_new = np.array(points_new)
     # points_old = np.array(points_old)

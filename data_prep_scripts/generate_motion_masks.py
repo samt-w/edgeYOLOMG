@@ -28,7 +28,8 @@ def process_video_masks(video_path: Path):
     while cap.isOpened():
         # when the loop reaches the end of the video, return_status is False and the loop breaks
         return_status, currentFrame = cap.read()
-        if not return_status:
+        # add a trigger if the frame is corrupted
+        if not return_status or currentFrame is None:
             break
 
         # add the next frame to the buffer    
