@@ -243,8 +243,8 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
         TEST_MINI_VAL = True
         
         if TEST_MINI_VAL:
-            LOGGER.info("TEST MODE: Truncating validation files to 78 images (3 batches).")
-            def get_mini_variant(path_str, num_lines = 78):
+            LOGGER.info("TEST MODE: Truncating validation files to 300 images.")
+            def get_mini_variant(path_str, num_lines = 300):
                 if not path_str:
                     return path_str
                 p = Path(path_str)
@@ -407,9 +407,9 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
                 # step the profiler at the end of each batch
                 prof.step()
 
-                # TEST MODE: Break epoch after 10 batches
-                if i >= 9:
-                    LOGGER.info("TEST MODE: Breaking epoch early after 10 batches.")
+                # TEST MODE: Break epoch after 100 batches
+                if i >= 100:
+                    LOGGER.info("TEST MODE: Breaking epoch early after 100 batches.")
                     break
             
             # Scheduler
