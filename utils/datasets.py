@@ -500,10 +500,19 @@ class LoadImagesAndLabels(Dataset):
             s = self.shapes  # wh
             ar = s[:, 1] / s[:, 0]  # aspect ratio #高和宽的比
             irect = ar.argsort() #根据ar排序
+
+            # RGB sort order
             self.im_files = [self.im_files[i] for i in irect]
             self.label_files = [self.label_files[i] for i in irect]
             self.labels = [self.labels[i] for i in irect]
             self.shapes = s[irect]  # wh
+
+            # mask sort order
+            self.im_files2 = [self.im_files2[i] for i in irect]
+            self.label_files2 = [self.label_files2[i] for i in irect]
+            self.labels2 = [self.labels2[i] for i in irect]
+            self.shapes2 = self.shapes2[irect]
+
             ar = ar[irect]
             
             # Set training image shapes 设置训练图片的shapes
@@ -516,30 +525,18 @@ class LoadImagesAndLabels(Dataset):
                     shapes[i] = [maxi, 1]
                 elif mini > 1:
                     shapes[i] = [1, 1 / mini]
+            
+            # use identical batch shapes for both RGB and Masks
             self.batch_shapes = np.ceil(np.array(shapes) * img_size / stride + pad).astype(np.int_) * stride
-            
+            self.batch_shapes2 = self.batch_shapes.copy()
 
-            
-            s2 = self.shapes2  # wh
-            ar2 = s2[:, 1] / s2[:, 0]  # aspect ratio #高和宽的比
-            irect2 = ar2.argsort() #根据ar排序
-            self.im_files2 = [self.im_files2[i] for i in irect2]
-            self.label_files2 = [self.label_files2[i] for i in irect2]
-            self.labels2 = [self.labels2[i] for i in irect2]
-            self.shapes2 = s2[irect2]  # wh
-            ar2 = ar2[irect2]
-            
-            shapes2 = [[1, 1]] * nb2
-            for i in range(nb2):
-                ari2 = ar2[bi2 == i]
-                mini, maxi = ari2.min(), ari2.max()
-                if maxi < 1:
-                    shapes2[i] = [maxi, 1]
-                elif mini > 1:
-                    shapes2[i] = [1, 1 / mini]
-            self.batch_shapes2 = np.ceil(np.array(shapes2) * img_size / stride + pad).astype(np.int_) * stride
+        # -------------------------------------------
+        # adding check that image/mask indexes match
+        assert self.n == self.n2, f"RGB/mask count mismatch: {self.n} RGB images vs {self.n2} masks"
+        mismatches = [(a, b) for a, b in zip(self.im_files, self.im_files2) if Path(a).stem != Path(b).stem]
+        assert not mismatches, f"{len(mismatches)} RGB/mask pairs misaligned, e.g. {mismatches[:3]}"
+        # -------------------------------------------
 
-            
         self.ims = [None] * self.n
         self.ims2 = [None] * self.n2
         self.npy_files = [Path(f).with_suffix('.npy') for f in self.im_files]
