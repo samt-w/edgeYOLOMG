@@ -20,10 +20,10 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim import SGD, Adam, AdamW, lr_scheduler
 from tqdm import tqdm
 
-# adding flags to route FP32 computations through tensor cores
-torch.backends.cudnn.benchmark = True
-torch.backends.cudnn.allow_tf32 = True
-torch.backends.cuda.matmul.allow_tf32 = True
+# # adding flags to route FP32 computations through tensor cores
+# torch.backends.cudnn.benchmark = True
+# torch.backends.cudnn.allow_tf32 = True
+# torch.backends.cuda.matmul.allow_tf32 = True
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[0]  # YOLOv5 root directory
