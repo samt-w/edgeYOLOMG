@@ -346,8 +346,10 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
             for i, (imgs,imgs2, targets, paths,paths2,_,_) in pbar:  # batch -------------------------------------------------------------
 
                 ni = i + nb * epoch  # number integrated batches (since train start)
-                imgs = imgs.to(device, non_blocking=True).float() / 255  # uint8 to float32, 0-255 to 0.0-1.0
-                imgs2 = imgs2.to(device, non_blocking=True).float() / 255  # uint8 to float32, 0-255 to 0.0-1.0
+                imgs = imgs.to(device, non_blocking=True).float()  # uint8 to float32, 0-255 to 0.0-1.0
+                imgs /= 255.0
+                imgs2 = imgs2.to(device, non_blocking=True).float()  # uint8 to float32, 0-255 to 0.0-1.0
+                imgs2 /= 255.0
                 # Warmup
                 if ni <= nw:
                     xi = [0, nw]  # x interp
