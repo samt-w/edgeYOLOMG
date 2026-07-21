@@ -393,19 +393,11 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
                 # Log 打印信息
                 if RANK in [-1, 0]:
                     mloss = (mloss * i + loss_items) / (i + 1)  # update mean losses
-                    mem = f'{torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0:.3g}G'  # (GB)
-                    pbar.set_description(('%10s' * 2 + '%10.4g' * 5) % (
-                        f'{epoch}/{epochs - 1}', mem, *mloss, targets.shape[0], imgs.shape[-1]))
-                    pbar.set_description(('%10s' * 2 + '%10.4g' * 5) % (
-                        f'{epoch}/{epochs - 1}', mem, *mloss, targets.shape[0], imgs2.shape[-1]))
-                    # --------------------------------------------------------------------
-                    # COMMENTING OUT TO PARTIALLY REVERT TO OLD SCRIPT FOR TESTING PURPOSES
-                    # # only synchronise CPU/GPUs every 20 batches, to minimise CPU wait time
-                    # if i % 20 == 0:
-                    #     mem = f'{torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0:.3g}G'  # (GB)
-                    #     pbar.set_description(('%10s' * 2 + '%10.4g' * 5) % (
-                    #         f'{epoch}/{epochs - 1}', mem, *mloss, targets.shape[0], imgs.shape[-1]))
-                    # --------------------------------------------------------------------
+                    # only synchronise CPU/GPUs every 20 batches, to minimise CPU wait time
+                    if i % 20 == 0:
+                        mem = f'{torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0:.3g}G'  # (GB)
+                        pbar.set_description(('%10s' * 2 + '%10.4g' * 5) % (
+                            f'{epoch}/{epochs - 1}', mem, *mloss, targets.shape[0], imgs.shape[-1]))
 
                     callbacks.run('on_train_batch_end', ni, model, imgs,imgs2,targets, paths,paths2, plots, opt.sync_bn)
                     
