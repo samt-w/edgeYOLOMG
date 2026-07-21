@@ -155,6 +155,9 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
         if any(x in k for x in freeze):
             LOGGER.info(f'freezing {k}')
             v.requires_grad = False
+    
+    # change channel formatting from NCHW to NHWC
+    model = model.to(memory_format=torch.channels_last)
 
     # Image size
     gs = max(int(model.stride.max()), 32)  # grid size (max stride)
@@ -351,9 +354,15 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
             for i, (imgs,imgs2, targets, paths,paths2,_,_) in pbar:  # batch -------------------------------------------------------------
 
                 ni = i + nb * epoch  # number integrated batches (since train start)
-                imgs = imgs.to(device, non_blocking=True).float()  # uint8 to float32, 0-255 to 0.0-1.0
+                imgs = imgs.to(device,
+                               non_blocking=True,
+                               # amending tensor format from NCHW to NHWC
+                               memory_format=torch.channels_last).float()  # uint8 to float32, 0-255 to 0.0-1.0
                 imgs /= 255.0
-                imgs2 = imgs2.to(device, non_blocking=True).float()  # uint8 to float32, 0-255 to 0.0-1.0
+                imgs2 = imgs2.to(device,
+                                 non_blocking=True,
+                                 # amending tensor format from NCHW to NHWC
+                                 memory_format=torch.channels_last).float()  # uint8 to float32, 0-255 to 0.0-1.0
                 imgs2 /= 255.0
                 # Warmup
                 if ni <= nw:
