@@ -741,21 +741,13 @@ if __name__ == "__main__":
 
     if tar_1280.exists() and not (data_dir / "train_1280.txt").exists():
         print("Extracting 1280 dataset...", flush = True)
-        subprocess.run(["tar",
-                        "-xf",
-                        str(tar_1280),
-                        "-C",
-                        str(data_dir)],
-                        check=True)
+        cmd_1280 = f"pv '{tar_1280}' | tar -xf - -C '{data_dir}'"
+        subprocess.run(cmd_1280, shell=True, check=True)
 
     if tar_640.exists() and not (data_dir / "train_640.txt").exists():
         print("Extracting 640 dataset...")
-        subprocess.run(["tar",
-                        "-xf",
-                        str(tar_640),
-                        "-C",
-                        str(data_dir)],
-                        check=True)
+        cmd_640 = f"pv '{tar_640}' | tar -xf - -C '{data_dir}'"
+        subprocess.run(cmd_640, shell=True, check=True)
 
     # run the training
     opt = parse_opt()
