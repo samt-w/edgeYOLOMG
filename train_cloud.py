@@ -20,6 +20,13 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim import SGD, Adam, AdamW, lr_scheduler
 from tqdm import tqdm
 
+# forcing torch.load() to allow custom class unpickling for PyTorch 2.6+ compatibility
+_original_torch_load = torch.load
+def _patched_torch_load(*args, **kwargs):
+    kwargs.setdefault('weights_only', False)
+    return _original_torch_load(*args, **kwargs)
+torch.load = _patched_torch_load
+
 # adding flags to route FP32 computations through tensor cores
 torch.backends.cudnn.benchmark = True
 torch.backends.cudnn.allow_tf32 = True
