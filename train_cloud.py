@@ -466,10 +466,15 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
 
                 # Save model
                 if (not nosave) or (final_epoch and not evolve):  # if save
+                    
+                    # Unwrap PyTorch 2.x compiled models before saving
+                    raw_model = model._orig_mod if hasattr(model, '_orig_mod') else model
+                    raw_ema = ema.ema._orig_mod if hasattr(ema.ema, '_orig_mod') else ema.ema
+                    
                     ckpt = {'epoch': epoch,
                             'best_fitness': best_fitness,
-                            'model': deepcopy(de_parallel(model)).half(),
-                            'ema': deepcopy(ema.ema).half(),
+                            'model': deepcopy(de_parallel(raw_model)).half(),
+                            'ema': deepcopy(raw_ema).half(),
                             'updates': ema.updates,
                             'optimizer': optimizer.state_dict(),
                             'wandb_id': loggers.wandb.wandb_run.id if loggers.wandb else None,
