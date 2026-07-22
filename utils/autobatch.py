@@ -63,5 +63,8 @@ def autobatch(model, imgsz=640, fraction=0.9, batch_size=16):
     batch_sizes = batch_sizes[:len(y)]
     p = np.polyfit(batch_sizes, y, deg=1)  # first degree polynomial fit
     b = int((f * fraction - p[1]) / p[0])  # y intercept (optimal batch size)
+    # forcing batch size to be a multiple of 8, for tensor efficiency
+    if b > 8:
+        b = b - (b % 8)
     LOGGER.info(f'{prefix}Using batch-size {b} for {d} {t * fraction:.2f}G/{t:.2f}G ({fraction * 100:.0f}%)')
     return b
