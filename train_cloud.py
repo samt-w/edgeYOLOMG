@@ -20,10 +20,10 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim import SGD, Adam, AdamW, lr_scheduler
 from tqdm import tqdm
 
-# # adding flags to route FP32 computations through tensor cores
-# torch.backends.cudnn.benchmark = True
-# torch.backends.cudnn.allow_tf32 = True
-# torch.backends.cuda.matmul.allow_tf32 = True
+# adding flags to route FP32 computations through tensor cores
+torch.backends.cudnn.benchmark = True
+torch.backends.cudnn.allow_tf32 = True
+torch.backends.cuda.matmul.allow_tf32 = True
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[0]  # YOLOv5 root directory
@@ -726,7 +726,9 @@ def run(**kwargs):
 
 
 if __name__ == "__main__":
-    import tarfile
+    import os
+    import subprocess
+    from pathlib import Path
     from dotenv import load_dotenv
     import runpod
 
@@ -738,14 +740,22 @@ if __name__ == "__main__":
     tar_640 = Path("/workspace/dataset_640.tar")
 
     if tar_1280.exists() and not (data_dir / "train_1280.txt").exists():
-        print("Extracting 1280 dataset...")
-        with tarfile.open(tar_1280, 'r') as tar:
-            tar.extractall(path=data_dir)
+        print("Extracting 1280 dataset...", flush = True)
+        subprocess.run(["tar",
+                        "-xf",
+                        str(tar_1280),
+                        "-C",
+                        str(data_dir)],
+                        check=True)
 
     if tar_640.exists() and not (data_dir / "train_640.txt").exists():
         print("Extracting 640 dataset...")
-        with tarfile.open(tar_640, 'r') as tar:
-            tar.extractall(path=data_dir)
+        subprocess.run(["tar",
+                        "-xf",
+                        str(tar_640),
+                        "-C",
+                        str(data_dir)],
+                        check=True)
 
     # run the training
     opt = parse_opt()
