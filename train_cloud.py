@@ -739,10 +739,10 @@ if __name__ == "__main__":
     tar_1280 = Path("/workspace/dataset_1280.tar")
     tar_640 = Path("/workspace/dataset_640.tar")
 
-    if tar_1280.exists() and not (data_dir / "train_1280.txt").exists():
-        print("Extracting 1280 dataset...", flush = True)
-        cmd_1280 = f"pv '{tar_1280}' | tar -xf - -C '{data_dir}'"
-        subprocess.run(cmd_1280, shell=True, check=True)
+    # if tar_1280.exists() and not (data_dir / "train_1280.txt").exists():
+    #     print("Extracting 1280 dataset...", flush = True)
+    #     cmd_1280 = f"pv '{tar_1280}' | tar -xf - -C '{data_dir}'"
+    #     subprocess.run(cmd_1280, shell=True, check=True)
 
     if tar_640.exists() and not (data_dir / "train_640.txt").exists():
         print("Extracting 640 dataset...")
