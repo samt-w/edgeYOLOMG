@@ -428,10 +428,10 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
                 # step the profiler at the end of each batch
                 prof.step()
 
-                # # TEST MODE: Break epoch after 100 batches
-                # if i >= 100:
-                #     LOGGER.info("TEST MODE: Breaking epoch early after 100 batches.")
-                #     break
+                # TEST MODE: Break epoch after 100 batches
+                if i >= 100:
+                    LOGGER.info("TEST MODE: Breaking epoch early after 100 batches.")
+                    break
             
             # Scheduler
             lr = [x['lr'] for x in optimizer.param_groups]  # for loggers
