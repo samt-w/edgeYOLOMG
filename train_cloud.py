@@ -257,26 +257,26 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
 
     # Process 0
     if RANK in [-1, 0]:
-        # # --------------------------------------------------------------------------
-        # # adding code block to shorten validation runs for testing purposes
-        # TEST_MINI_VAL = True
+        # --------------------------------------------------------------------------
+        # adding code block to shorten validation runs for testing purposes
+        TEST_MINI_VAL = True
         
-        # if TEST_MINI_VAL:
-        #     LOGGER.info("TEST MODE: Truncating validation files to 300 images.")
-        #     def get_mini_variant(path_str, num_lines = 300):
-        #         if not path_str:
-        #             return path_str
-        #         p = Path(path_str)
-        #         if p.exists():
-        #             lines = p.read_text().splitlines()
-        #             mini_p = p.parent / f"{p.stem}_mini{p.suffix}"
-        #             mini_p.write_text("\n".join(lines[:num_lines]))
-        #             return str(mini_p)
-        #         return path_str
+        if TEST_MINI_VAL:
+            LOGGER.info("TEST MODE: Truncating validation files to 300 images.")
+            def get_mini_variant(path_str, num_lines = 300):
+                if not path_str:
+                    return path_str
+                p = Path(path_str)
+                if p.exists():
+                    lines = p.read_text().splitlines()
+                    mini_p = p.parent / f"{p.stem}_mini{p.suffix}"
+                    mini_p.write_text("\n".join(lines[:num_lines]))
+                    return str(mini_p)
+                return path_str
                 
-        #     val_path = get_mini_variant(val_path)
-        #     val_path2 = get_mini_variant(val_path2)
-        # # --------------------------------------------------------------------------
+            val_path = get_mini_variant(val_path)
+            val_path2 = get_mini_variant(val_path2)
+        # --------------------------------------------------------------------------
         val_loader = create_dataloader(val_path,val_path2, imgsz, batch_size // WORLD_SIZE * 1, gs, single_cls,
                                        hyp=hyp, cache=None if noval else opt.cache,
                                        rect=False, rank=-1, workers=workers * 2, pad=0.5,
