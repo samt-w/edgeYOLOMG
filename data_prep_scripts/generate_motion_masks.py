@@ -42,8 +42,9 @@ def process_video_masks(video_path: Path):
         frame_buffer.append(currentFrame)
 
         # for debugging purposes, log every 500 frames
-        with open("mask_telemetry.log", "a") as f:
-            f.write(f"PROGRESS: {video_name} at frame {frame_count}\n")
+        if frame_count % 500 == 0:
+            with open("mask_telemetry.log", "a") as f:
+                f.write(f"PROGRESS: {video_name} at frame {frame_count}\n")
         # ----------------------------------------------------
 
         # avoid computing mask until have reached 5 frames
