@@ -3,6 +3,18 @@
 ## generate_motion_masks.py
 ## generate_dataset.py
 
+# force spawn to prevent OpenMP livelocks
+import multiprocessing as mp
+mp.set_start_method('spawn', force=True)
+
+# specify number of threads that OpenCV and PyTorch can spawn
+# this matters because these libraries are called in MOD_Functions.py and try
+# to maximise their threads in a way that can clash 
+import cv2
+cv2.setNumThreads(0)
+import torch
+torch.set_num_threads(1)
+
 import sys
 import time
 import concurrent.futures
@@ -44,14 +56,14 @@ def main():
     print("--- Extracting frames in parallel ---")
     frames_start_time = time.time()
     with concurrent.futures.ProcessPoolExecutor(max_workers = RECOMMENDED_CORES) as executor:
-        executor.map(process_video_frames, video_paths)
+        list(executor.map(process_video_frames, video_paths))
     frames_duration = time.time() - frames_start_time
     
     # generate motion masks for the videos
     print("--- Generating masks in parallel ---")
     masks_start_time = time.time()
     with concurrent.futures.ProcessPoolExecutor(max_workers = RECOMMENDED_CORES) as executor:
-        executor.map(process_video_masks, video_paths)
+        list(executor.map(process_video_masks, video_paths))
     masks_duration = time.time() - masks_start_time
 
     # generate the dataset structure for the selected videos
