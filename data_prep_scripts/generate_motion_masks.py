@@ -17,6 +17,11 @@ def process_video_masks(video_path: Path):
     video_name = video_path.stem
     print(f"Processing motion masks for: {video_name}")
 
+    # for debugging purposes, log moment processing starts
+    with open("mask_telemetry.log", "a") as f:
+        f.write(f"STARTED: {video_name}\n")
+    # ----------------------------------------------------
+
     # create an OpenCV VideoCapture object
     cap = cv2.VideoCapture(str(video_path))
 
@@ -36,6 +41,11 @@ def process_video_masks(video_path: Path):
         frame_count += 1
         frame_buffer.append(currentFrame)
 
+        # for debugging purposes, log every 500 frames
+        with open("mask_telemetry.log", "a") as f:
+            f.write(f"PROGRESS: {video_name} at frame {frame_count}\n")
+        # ----------------------------------------------------
+
         # avoid computing mask until have reached 5 frames
         if len(frame_buffer) < 5:
             continue
@@ -53,6 +63,11 @@ def process_video_masks(video_path: Path):
 
     # close the video file immediately after processing is finished
     cap.release()
+
+    # for debugging purposes, log moment processing ends
+    with open("mask_telemetry.log", "a") as f:
+        f.write(f"FINISHED: {video_name} (Total frames: {frame_count})\n")
+    # ----------------------------------------------------
 
 def process_video_directory_masks(video_dir: Path):
     # this function scans the given directory for mp4 files and calls the motion mask function on them
