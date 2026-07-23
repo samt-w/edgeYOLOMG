@@ -163,12 +163,12 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
             LOGGER.info(f'freezing {k}')
             v.requires_grad = False
 
-    # adding the torch.compile() optimiser
-    if hasattr(torch, 'compile'):
-        LOGGER.info('Compiling model with torch.compile()...')
-        # force out-of-place operations in the Detect layer to prevent Inductor crashes
-        model.model[-1].inplace = False 
-        model = torch.compile(model)
+    # # adding the torch.compile() optimiser
+    # if hasattr(torch, 'compile'):
+    #     LOGGER.info('Compiling model with torch.compile()...')
+    #     # force out-of-place operations in the Detect layer to prevent Inductor crashes
+    #     model.model[-1].inplace = False 
+    #     model = torch.compile(model)
 
     # Image size
     gs = max(int(model.stride.max()), 32)  # grid size (max stride)
@@ -257,26 +257,26 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
 
     # Process 0
     if RANK in [-1, 0]:
-        # # --------------------------------------------------------------------------
-        # # adding code block to shorten validation runs for testing purposes
-        # TEST_MINI_VAL = True
+        # --------------------------------------------------------------------------
+        # adding code block to shorten validation runs for testing purposes
+        TEST_MINI_VAL = True
         
-        # if TEST_MINI_VAL:
-        #     LOGGER.info("TEST MODE: Truncating validation files to 300 images.")
-        #     def get_mini_variant(path_str, num_lines = 300):
-        #         if not path_str:
-        #             return path_str
-        #         p = Path(path_str)
-        #         if p.exists():
-        #             lines = p.read_text().splitlines()
-        #             mini_p = p.parent / f"{p.stem}_mini{p.suffix}"
-        #             mini_p.write_text("\n".join(lines[:num_lines]))
-        #             return str(mini_p)
-        #         return path_str
+        if TEST_MINI_VAL:
+            LOGGER.info("TEST MODE: Truncating validation files to 300 images.")
+            def get_mini_variant(path_str, num_lines = 300):
+                if not path_str:
+                    return path_str
+                p = Path(path_str)
+                if p.exists():
+                    lines = p.read_text().splitlines()
+                    mini_p = p.parent / f"{p.stem}_mini{p.suffix}"
+                    mini_p.write_text("\n".join(lines[:num_lines]))
+                    return str(mini_p)
+                return path_str
                 
-        #     val_path = get_mini_variant(val_path)
-        #     val_path2 = get_mini_variant(val_path2)
-        # # --------------------------------------------------------------------------
+            val_path = get_mini_variant(val_path)
+            val_path2 = get_mini_variant(val_path2)
+        # --------------------------------------------------------------------------
         val_loader = create_dataloader(val_path,val_path2, imgsz, batch_size // WORLD_SIZE * 1, gs, single_cls,
                                        hyp=hyp, cache=None if noval else opt.cache,
                                        rect=False, rank=-1, workers=workers * 2, pad=0.5,
@@ -319,7 +319,7 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
     maps = np.zeros(nc)  # mAP per class
     results = (0, 0, 0, 0, 0, 0, 0)  # P, R, mAP@.5, mAP@.5-.95, val_loss(box, obj, cls)
     scheduler.last_epoch = start_epoch - 1  # do not move
-    scaler = torch.cuda.amp.GradScaler(enabled=cuda)
+    scaler = torch.amp.GradScaler('cuda', enabled=cuda)
     stopper = EarlyStopping(patience=opt.patience)
     compute_loss = ComputeLoss(model)  # init loss class
     LOGGER.info(f'Image sizes {imgsz} train, {imgsz} val\n'
@@ -390,7 +390,7 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
                         imgs = nn.functional.interpolate(imgs, size=ns, mode='bilinear', align_corners=False)
                         imgs2 = nn.functional.interpolate(imgs2, size=ns2, mode='bilinear', align_corners=False)
                 # Forward 
-                with torch.cuda.amp.autocast(enabled=cuda):
+                with torch.amp.autocast('cuda', enabled=cuda, dtype=torch.bfloat16):
                     pred = model(imgs,imgs2)  
                     # loss
                     loss, loss_items = compute_loss(pred, targets.to(device))  # loss scaled by batch_size
@@ -428,10 +428,10 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
                 # step the profiler at the end of each batch
                 prof.step()
 
-                # # TEST MODE: Break epoch after 100 batches
-                # if i >= 100:
-                #     LOGGER.info("TEST MODE: Breaking epoch early after 100 batches.")
-                #     break
+                # TEST MODE: Break epoch after 100 batches
+                if i >= 100:
+                    LOGGER.info("TEST MODE: Breaking epoch early after 100 batches.")
+                    break
             
             # Scheduler
             lr = [x['lr'] for x in optimizer.param_groups]  # for loggers
