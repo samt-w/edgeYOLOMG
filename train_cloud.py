@@ -279,7 +279,7 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
         # # --------------------------------------------------------------------------
         val_loader = create_dataloader(val_path,val_path2, imgsz, batch_size // WORLD_SIZE * 1, gs, single_cls,
                                        hyp=hyp, cache=None if noval else opt.cache,
-                                       rect=True, rank=-1, workers=workers * 2, pad=0.5,
+                                       rect=False, rank=-1, workers=workers * 2, pad=0.5,
                                        prefix=colorstr('val: '),prefix2=colorstr('val2: '),
                                        img_dir=img_dir, mask_dir=mask_dir, label_dir=label_dir)[0]
 
