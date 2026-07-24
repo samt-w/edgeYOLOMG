@@ -454,8 +454,7 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
                                             save_dir=save_dir,
                                             plots=False,
                                             callbacks=callbacks,
-                                            compute_loss=compute_loss,
-                                            conf_thres=0.0001)
+                                            compute_loss=compute_loss)
 
                 # Update best mAP
                 fi = fitness(np.array(results).reshape(1, -1))  # weighted combination of [P, R, mAP@.5, mAP@.5-.95]
