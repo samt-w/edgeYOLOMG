@@ -163,12 +163,12 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
             LOGGER.info(f'freezing {k}')
             v.requires_grad = False
 
-    # # adding the torch.compile() optimiser
-    # if hasattr(torch, 'compile'):
-    #     LOGGER.info('Compiling model with torch.compile()...')
-    #     # force out-of-place operations in the Detect layer to prevent Inductor crashes
-    #     model.model[-1].inplace = False 
-    #     model = torch.compile(model)
+    # adding the torch.compile() optimiser
+    if hasattr(torch, 'compile'):
+        LOGGER.info('Compiling model with torch.compile()...')
+        # force out-of-place operations in the Detect layer to prevent Inductor crashes
+        model.model[-1].inplace = False 
+        model = torch.compile(model)
 
     # Image size
     gs = max(int(model.stride.max()), 32)  # grid size (max stride)
@@ -327,183 +327,183 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
                 f"Logging results to {colorstr('bold', save_dir)}\n"
                 f'Starting training for {epochs} epochs...')
 
-    # add profiler to the epochs
-    with torch.profiler.profile(
-        activities = [torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA],
-        schedule = torch.profiler.schedule(skip_first = 2,
-                                           wait = 2,
-                                           warmup = 1,
-                                           active = 2,
-                                           repeat = 1),
-        on_trace_ready = torch.profiler.tensorboard_trace_handler(str(save_dir / 'profiler_logs')),
-        record_shapes = True,
-        profile_memory = True,
-        with_flops = True
-    ) as prof:
-        for epoch in range(start_epoch, epochs):  # epoch ------------------------------------------------------------------
-            model.train()
+    # # add profiler to the epochs
+    # with torch.profiler.profile(
+    #     activities = [torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA],
+    #     schedule = torch.profiler.schedule(skip_first = 2,
+    #                                        wait = 2,
+    #                                        warmup = 1,
+    #                                        active = 2,
+    #                                        repeat = 1),
+    #     on_trace_ready = torch.profiler.tensorboard_trace_handler(str(save_dir / 'profiler_logs')),
+    #     record_shapes = True,
+    #     profile_memory = True,
+    #     with_flops = True
+    # ) as prof:
+    for epoch in range(start_epoch, epochs):  # epoch ------------------------------------------------------------------
+        model.train()
 
-            # Update image weights (optional, single-GPU only)
-            if opt.image_weights:
-                cw = model.class_weights.cpu().numpy() * (1 - maps) ** 2 / nc  # class weights
-                iw = labels_to_image_weights(dataset.labels, nc=nc, class_weights=cw)  # image weights
-                dataset.indices = random.choices(range(dataset.n), weights=iw, k=dataset.n)  # rand weighted idx
+        # Update image weights (optional, single-GPU only)
+        if opt.image_weights:
+            cw = model.class_weights.cpu().numpy() * (1 - maps) ** 2 / nc  # class weights
+            iw = labels_to_image_weights(dataset.labels, nc=nc, class_weights=cw)  # image weights
+            dataset.indices = random.choices(range(dataset.n), weights=iw, k=dataset.n)  # rand weighted idx
 
-            # Update mosaic border (optional)
-            # b = int(random.uniform(0.25 * imgsz, 0.75 * imgsz + gs) // gs * gs)
-            # dataset.mosaic_border = [b - imgsz, -b]  # height, width borders
-            
-            mloss = torch.zeros(3, device=device)  # mean losses
-            if RANK != -1:
-                train_loader.sampler.set_epoch(epoch)
-            pbar = enumerate(train_loader)
-            LOGGER.info(('\n' + '%10s' * 7) % ('Epoch', 'gpu_mem', 'box', 'obj', 'cls', 'labels', 'img_size'))
-            if RANK in [-1, 0]:
-                pbar = tqdm(pbar, total=nb, bar_format='{l_bar}{bar:10}{r_bar}{bar:-10b}')  # progress bar
-            optimizer.zero_grad() 
+        # Update mosaic border (optional)
+        # b = int(random.uniform(0.25 * imgsz, 0.75 * imgsz + gs) // gs * gs)
+        # dataset.mosaic_border = [b - imgsz, -b]  # height, width borders
         
-            for i, (imgs,imgs2, targets, paths,paths2,_,_) in pbar:  # batch -------------------------------------------------------------
+        mloss = torch.zeros(3, device=device)  # mean losses
+        if RANK != -1:
+            train_loader.sampler.set_epoch(epoch)
+        pbar = enumerate(train_loader)
+        LOGGER.info(('\n' + '%10s' * 7) % ('Epoch', 'gpu_mem', 'box', 'obj', 'cls', 'labels', 'img_size'))
+        if RANK in [-1, 0]:
+            pbar = tqdm(pbar, total=nb, bar_format='{l_bar}{bar:10}{r_bar}{bar:-10b}')  # progress bar
+        optimizer.zero_grad() 
+    
+        for i, (imgs,imgs2, targets, paths,paths2,_,_) in pbar:  # batch -------------------------------------------------------------
 
-                ni = i + nb * epoch  # number integrated batches (since train start)
-                imgs = imgs.to(device, non_blocking=True).float()  # uint8 to float32, 0-255 to 0.0-1.0
-                imgs /= 255.0
-                imgs2 = imgs2.to(device, non_blocking=True).float()  # uint8 to float32, 0-255 to 0.0-1.0
-                imgs2 /= 255.0
-                # Warmup
-                if ni <= nw:
-                    xi = [0, nw]  # x interp
-                    # compute_loss.gr = np.interp(ni, xi, [0.0, 1.0])  # iou loss ratio (obj_loss = 1.0 or iou)
-                    accumulate = max(1, np.interp(ni, xi, [1, nbs / batch_size]).round())
-                    for j, x in enumerate(optimizer.param_groups):
-                        # bias lr falls from 0.1 to lr0, all other lrs rise from 0.0 to lr0
-                        x['lr'] = np.interp(ni, xi, [hyp['warmup_bias_lr'] if j == 2 else 0.0, x['initial_lr'] * lf(epoch)])
-                        if 'momentum' in x:
-                            x['momentum'] = np.interp(ni, xi, [hyp['warmup_momentum'], hyp['momentum']])
+            ni = i + nb * epoch  # number integrated batches (since train start)
+            imgs = imgs.to(device, non_blocking=True).float()  # uint8 to float32, 0-255 to 0.0-1.0
+            imgs /= 255.0
+            imgs2 = imgs2.to(device, non_blocking=True).float()  # uint8 to float32, 0-255 to 0.0-1.0
+            imgs2 /= 255.0
+            # Warmup
+            if ni <= nw:
+                xi = [0, nw]  # x interp
+                # compute_loss.gr = np.interp(ni, xi, [0.0, 1.0])  # iou loss ratio (obj_loss = 1.0 or iou)
+                accumulate = max(1, np.interp(ni, xi, [1, nbs / batch_size]).round())
+                for j, x in enumerate(optimizer.param_groups):
+                    # bias lr falls from 0.1 to lr0, all other lrs rise from 0.0 to lr0
+                    x['lr'] = np.interp(ni, xi, [hyp['warmup_bias_lr'] if j == 2 else 0.0, x['initial_lr'] * lf(epoch)])
+                    if 'momentum' in x:
+                        x['momentum'] = np.interp(ni, xi, [hyp['warmup_momentum'], hyp['momentum']])
 
-                if opt.multi_scale:
-                    sz = random.randrange(imgsz * 0.5, imgsz * 1.5 + gs) // gs * gs  # size
-                    sf = sz / max(imgs.shape[2:])  # scale factor
-                    sf2 = sz / max(imgs2.shape[2:])  # scale factor
-                    if sf != 1:
-                        ns = [math.ceil(x * sf / gs) * gs for x in imgs.shape[2:]]  # new shape (stretched to gs-multiple)
-                        ns2 = [math.ceil(x * sf2 / gs) * gs for x in imgs2.shape[2:]]
-                        imgs = nn.functional.interpolate(imgs, size=ns, mode='bilinear', align_corners=False)
-                        imgs2 = nn.functional.interpolate(imgs2, size=ns2, mode='bilinear', align_corners=False)
-                # Forward 
-                with torch.amp.autocast('cuda', enabled=cuda, dtype=torch.bfloat16):
-                    pred = model(imgs,imgs2)  
-                    # loss
-                    loss, loss_items = compute_loss(pred, targets.to(device))  # loss scaled by batch_size
-                    if RANK != -1:
-                        loss *= WORLD_SIZE  # gradient averaged between devices in DDP mode
-                    if opt.quad:
-                        loss *= 4.
+            if opt.multi_scale:
+                sz = random.randrange(imgsz * 0.5, imgsz * 1.5 + gs) // gs * gs  # size
+                sf = sz / max(imgs.shape[2:])  # scale factor
+                sf2 = sz / max(imgs2.shape[2:])  # scale factor
+                if sf != 1:
+                    ns = [math.ceil(x * sf / gs) * gs for x in imgs.shape[2:]]  # new shape (stretched to gs-multiple)
+                    ns2 = [math.ceil(x * sf2 / gs) * gs for x in imgs2.shape[2:]]
+                    imgs = nn.functional.interpolate(imgs, size=ns, mode='bilinear', align_corners=False)
+                    imgs2 = nn.functional.interpolate(imgs2, size=ns2, mode='bilinear', align_corners=False)
+            # Forward 
+            with torch.amp.autocast('cuda', enabled=cuda, dtype=torch.bfloat16):
+                pred = model(imgs,imgs2)  
+                # loss
+                loss, loss_items = compute_loss(pred, targets.to(device))  # loss scaled by batch_size
+                if RANK != -1:
+                    loss *= WORLD_SIZE  # gradient averaged between devices in DDP mode
+                if opt.quad:
+                    loss *= 4.
 
-                # Backward
-                scaler.scale(loss).backward()
+            # Backward
+            scaler.scale(loss).backward()
 
-                # Optimize
-                if ni - last_opt_step >= accumulate: 
-                    scaler.step(optimizer)  # optimizer.step
-                    scaler.update()
-                    optimizer.zero_grad() 
-                    if ema:
-                        ema.update(model)
-                    last_opt_step = ni
+            # Optimize
+            if ni - last_opt_step >= accumulate: 
+                scaler.step(optimizer)  # optimizer.step
+                scaler.update()
+                optimizer.zero_grad() 
+                if ema:
+                    ema.update(model)
+                last_opt_step = ni
 
-                # Log 打印信息
-                if RANK in [-1, 0]:
-                    mloss = (mloss * i + loss_items) / (i + 1)  # update mean losses
-                    # only synchronise CPU/GPUs every 20 batches, to minimise CPU wait time
-                    if i % 20 == 0:
-                        mem = f'{torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0:.3g}G'  # (GB)
-                        pbar.set_description(('%10s' * 2 + '%10.4g' * 5) % (
-                            f'{epoch}/{epochs - 1}', mem, *mloss, targets.shape[0], imgs.shape[-1]))
-
-                    callbacks.run('on_train_batch_end', ni, model, imgs,imgs2,targets, paths,paths2, plots, opt.sync_bn)
-                    
-                    if callbacks.stop_training:
-                        return
-                
-                # step the profiler at the end of each batch
-                prof.step()
-
-                # # TEST MODE: Break epoch after 100 batches
-                # if i >= 100:
-                #     LOGGER.info("TEST MODE: Breaking epoch early after 100 batches.")
-                #     break
-            
-            # Scheduler
-            lr = [x['lr'] for x in optimizer.param_groups]  # for loggers
-            scheduler.step()                                                                                           
-
+            # Log 打印信息
             if RANK in [-1, 0]:
-                # mAP
-                callbacks.run('on_train_epoch_end', epoch=epoch)
-                ema.update_attr(model, include=['yaml', 'nc', 'hyp', 'names', 'stride', 'class_weights'])
-                final_epoch = (epoch + 1 == epochs) or stopper.possible_stop
+                mloss = (mloss * i + loss_items) / (i + 1)  # update mean losses
+                # only synchronise CPU/GPUs every 20 batches, to minimise CPU wait time
+                if i % 20 == 0:
+                    mem = f'{torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0:.3g}G'  # (GB)
+                    pbar.set_description(('%10s' * 2 + '%10.4g' * 5) % (
+                        f'{epoch}/{epochs - 1}', mem, *mloss, targets.shape[0], imgs.shape[-1]))
+
+                callbacks.run('on_train_batch_end', ni, model, imgs,imgs2,targets, paths,paths2, plots, opt.sync_bn)
+                
+                if callbacks.stop_training:
+                    return
             
-                if not noval or final_epoch:  # Calculate mAP
-                    print('batch_size: ', batch_size)
-                    results, maps, _ = val.run(data_dict,
-                                            batch_size=batch_size // WORLD_SIZE,
-                                            imgsz=imgsz,
-                                            model=ema.ema,
-                                            single_cls=single_cls,
-                                            dataloader=val_loader,
-                                            save_dir=save_dir,
-                                            plots=False,
-                                            callbacks=callbacks,
-                                            compute_loss=compute_loss)
+            # # step the profiler at the end of each batch
+            # prof.step()
 
-                # Update best mAP
-                fi = fitness(np.array(results).reshape(1, -1))  # weighted combination of [P, R, mAP@.5, mAP@.5-.95]
-                if fi > best_fitness:
-                    best_fitness = fi
-                log_vals = list(mloss) + list(results) + lr
-                callbacks.run('on_fit_epoch_end', log_vals, epoch, best_fitness, fi)
+            # # TEST MODE: Break epoch after 100 batches
+            # if i >= 100:
+            #     LOGGER.info("TEST MODE: Breaking epoch early after 100 batches.")
+            #     break
+        
+        # Scheduler
+        lr = [x['lr'] for x in optimizer.param_groups]  # for loggers
+        scheduler.step()                                                                                           
 
-                # Save model
-                if (not nosave) or (final_epoch and not evolve):  # if save
-                    
-                    # Unwrap PyTorch 2.x compiled models before saving
-                    raw_model = model._orig_mod if hasattr(model, '_orig_mod') else model
-                    raw_ema = ema.ema._orig_mod if hasattr(ema.ema, '_orig_mod') else ema.ema
-                    
-                    ckpt = {'epoch': epoch,
-                            'best_fitness': best_fitness,
-                            'model': deepcopy(de_parallel(raw_model)).half(),
-                            'ema': deepcopy(raw_ema).half(),
-                            'updates': ema.updates,
-                            'optimizer': optimizer.state_dict(),
-                            'wandb_id': loggers.wandb.wandb_run.id if loggers.wandb else None,
-                            'date': datetime.now().isoformat()}
+        if RANK in [-1, 0]:
+            # mAP
+            callbacks.run('on_train_epoch_end', epoch=epoch)
+            ema.update_attr(model, include=['yaml', 'nc', 'hyp', 'names', 'stride', 'class_weights'])
+            final_epoch = (epoch + 1 == epochs) or stopper.possible_stop
+        
+            if not noval or final_epoch:  # Calculate mAP
+                print('batch_size: ', batch_size)
+                results, maps, _ = val.run(data_dict,
+                                        batch_size=batch_size // WORLD_SIZE,
+                                        imgsz=imgsz,
+                                        model=ema.ema,
+                                        single_cls=single_cls,
+                                        dataloader=val_loader,
+                                        save_dir=save_dir,
+                                        plots=False,
+                                        callbacks=callbacks,
+                                        compute_loss=compute_loss)
 
-                    # Save last, best and delete
-                    torch.save(ckpt, last)
-                    if best_fitness == fi:
-                        torch.save(ckpt, best)
-                    if (epoch > 0) and (opt.save_period > 0) and (epoch % opt.save_period == 0):
-                        torch.save(ckpt, w / f'epoch{epoch}.pt')
-                    del ckpt
-                    callbacks.run('on_model_save', last, epoch, final_epoch, best_fitness, fi)
+            # Update best mAP
+            fi = fitness(np.array(results).reshape(1, -1))  # weighted combination of [P, R, mAP@.5, mAP@.5-.95]
+            if fi > best_fitness:
+                best_fitness = fi
+            log_vals = list(mloss) + list(results) + lr
+            callbacks.run('on_fit_epoch_end', log_vals, epoch, best_fitness, fi)
 
-                # Stop Single-GPU
-                if RANK == -1 and stopper(epoch=epoch, fitness=fi):
-                    break
+            # Save model
+            if (not nosave) or (final_epoch and not evolve):  # if save
+                
+                # Unwrap PyTorch 2.x compiled models before saving
+                raw_model = model._orig_mod if hasattr(model, '_orig_mod') else model
+                raw_ema = ema.ema._orig_mod if hasattr(ema.ema, '_orig_mod') else ema.ema
+                
+                ckpt = {'epoch': epoch,
+                        'best_fitness': best_fitness,
+                        'model': deepcopy(de_parallel(raw_model)).half(),
+                        'ema': deepcopy(raw_ema).half(),
+                        'updates': ema.updates,
+                        'optimizer': optimizer.state_dict(),
+                        'wandb_id': loggers.wandb.wandb_run.id if loggers.wandb else None,
+                        'date': datetime.now().isoformat()}
 
-                # Stop DDP TODO: known issues shttps://github.com/ultralytics/yolov5/pull/4576
-                # stop = stopper(epoch=epoch, fitness=fi)
-                # if RANK == 0:
-                #    dist.broadcast_object_list([stop], 0)  # broadcast 'stop' to all ranks
+                # Save last, best and delete
+                torch.save(ckpt, last)
+                if best_fitness == fi:
+                    torch.save(ckpt, best)
+                if (epoch > 0) and (opt.save_period > 0) and (epoch % opt.save_period == 0):
+                    torch.save(ckpt, w / f'epoch{epoch}.pt')
+                del ckpt
+                callbacks.run('on_model_save', last, epoch, final_epoch, best_fitness, fi)
 
-            # Stop DPP
-            # with torch_distributed_zero_first(RANK):
-            # if stop:
-            #    break  # must break all DDP ranks
+            # Stop Single-GPU
+            if RANK == -1 and stopper(epoch=epoch, fitness=fi):
+                break
 
-            # end epoch ----------------------------------------------------------------------------------------------------
-        # end training -----------------------------------------------------------------------------------------------------
+            # Stop DDP TODO: known issues shttps://github.com/ultralytics/yolov5/pull/4576
+            # stop = stopper(epoch=epoch, fitness=fi)
+            # if RANK == 0:
+            #    dist.broadcast_object_list([stop], 0)  # broadcast 'stop' to all ranks
+
+        # Stop DPP
+        # with torch_distributed_zero_first(RANK):
+        # if stop:
+        #    break  # must break all DDP ranks
+
+        # end epoch ----------------------------------------------------------------------------------------------------
+    # end training -----------------------------------------------------------------------------------------------------
     if RANK in [-1, 0]:
         LOGGER.info(f'\n{epoch - start_epoch + 1} epochs completed in {(time.time() - t0) / 3600:.3f} hours.')
         for f in last, best:
