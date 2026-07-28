@@ -163,12 +163,12 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
             LOGGER.info(f'freezing {k}')
             v.requires_grad = False
 
-    # adding the torch.compile() optimiser
-    if hasattr(torch, 'compile'):
-        LOGGER.info('Compiling model with torch.compile()...')
-        # force out-of-place operations in the Detect layer to prevent Inductor crashes
-        model.model[-1].inplace = False 
-        model = torch.compile(model)
+    # # adding the torch.compile() optimiser
+    # if hasattr(torch, 'compile'):
+    #     LOGGER.info('Compiling model with torch.compile()...')
+    #     # force out-of-place operations in the Detect layer to prevent Inductor crashes
+    #     model.model[-1].inplace = False 
+    #     model = torch.compile(model)
 
     # Image size
     gs = max(int(model.stride.max()), 32)  # grid size (max stride)
