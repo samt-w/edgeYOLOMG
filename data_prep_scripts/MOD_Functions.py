@@ -252,9 +252,13 @@ def GFTT_compensate(frame1, frame2):
 def motion_compensate(frame1, frame2):
     """
     This function transforms frame1 so that frame1 matches the camera position of frame2
+
+    This is called "ego-motion compensation", and is required to avoid the entire background
+    being classified as 'movement' in the motion mask
     """
     # grid-based KLT tracking
-    lk_params = dict(winSize=(15, 15), maxLevel=3,
+    lk_params = dict(winSize=(15, 15),
+                     maxLevel=3,
                      criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.003))
 
     # Create randomly generated colors
@@ -263,6 +267,7 @@ def motion_compensate(frame1, frame2):
     height = frame2.shape[0]
     scale = 2
 
+    # create a grid of points across each image
     frame1_grid = cv2.resize(frame1, (960 * scale, 540 * scale), dst=None, interpolation=cv2.INTER_CUBIC)
     frame2_grid = cv2.resize(frame2, (960 * scale, 540 * scale), dst=None, interpolation=cv2.INTER_CUBIC)
 
@@ -282,6 +287,7 @@ def motion_compensate(frame1, frame2):
     pts_num = grid_numW * grid_numH
     pts_prev = p1.reshape(pts_num, 1, 2)
 
+    # use the Lucas-Kanade algorithm to track how grid points moved between frames
     pts_cur, st, err = cv2.calcOpticalFlowPyrLK(frame1_grid, frame2_grid, pts_prev, None, **lk_params)
 
     # Select the good points
@@ -296,6 +302,8 @@ def motion_compensate(frame1, frame2):
     motion_distance = []
     translate_x = []
     translate_y = []
+
+    # compute Euclidean distance for points. If point moved > 50px, remove it (to avoid tracking errors)
     for i, (new, old) in enumerate(zip(good_new, good_old)):
         a, b = new.ravel()
         c, d = old.ravel()
@@ -343,6 +351,9 @@ def motion_compensate(frame1, frame2):
     # homography_matrix, status = cv2.findHomography(good_new, good_old, cv2.RANSAC, 3.0)
     # homography_matrix, status = cv2.findHomography(points_new, points_old, cv2.RANSAC, 3.0)
     # matchesMask = status.ravel().tolist()
+    
+    # if fewer than 15 valid points, just use identity matrix as not enough data
+    # otherwise, use the RANSAC algorithm to compute the transformation matrix
     if len(good_old) < 15:
         homography_matrix = np.array([[0.999, 0, 0], [0, 0.999, 0], [0, 0, 1]])
     else:
@@ -351,7 +362,7 @@ def motion_compensate(frame1, frame2):
     # Calculate the transformed image based on the transformation matrix
     compensated = cv2.warpPerspective(frame1, homography_matrix, (width, height), flags=cv2.INTER_LINEAR + cv2.WARP_INVERSE_MAP)
 
-    # Calculate mask
+    # Calculate mask of valid pixels (invalid pixels are marked as 255)
     vertex = np.array([[0, 0], [width, 0], [width, height], [0, height]], dtype=np.float32).reshape(-1, 1, 2)
     homo_inv = np.linalg.inv(homography_matrix)
     vertex_trans = cv2.perspectiveTransform(vertex, homo_inv)
