@@ -11,6 +11,7 @@ using mAP and FPS.
 # compute motion mask for each frame
 # make prediction
 # end timer
+# discard frame in buffer
 # report accuracy and frame time
 # convert accuracy and frame time to mAP and FPS
 
