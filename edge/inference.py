@@ -26,7 +26,12 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
 import cv2
+import torch
+import numpy as np
 from data_prep_scripts.MOD_Functions import motion_compensate
+from utils.general import box_iou, check_img_size
+from utils.torch_utils import select_device
+from models.experimental import attempt_load
 
 def compute_mask_in_memory(lastFrame1, lastFrame2, currentFrame):
     """
@@ -40,7 +45,7 @@ def compute_mask_in_memory(lastFrame1, lastFrame2, currentFrame):
 
     This naming convention comes from the original code.
 
-    This function differs to the data preparation counterpart because it holds the 
+    This function differs to its data preparation counterpart because it holds the 
     mask in memory rather than saving it to disk. This is necessary for inference.
     """
     # Blur images to eliminate some low-level noise 
@@ -62,6 +67,78 @@ def compute_mask_in_memory(lastFrame1, lastFrame2, currentFrame):
     # Inflate 2D motion mask to 3D
     frameDiff_3c = cv2.cvtColor(frameDiff, cv2.COLOR_GRAY2BGR)
     return frameDiff_3c
+
+def load_model_and_device(weights, device_id, imgsz):
+    """
+    Initialises the device and loads model weights
+    
+    Args:
+        weights: path to the trained model weights (.pt file)
+        device_id: device to use for inference (e.g., "0" for CUDA GPU 0)
+        imgsz: inference image size
+        
+    Returns a tuple with the loaded model, device object, boolean for FP16 precision,
+    model stride, verified image size, and list of class names.
+    """
+    device = select_device(device_id)
+    half = device.type != "cpu" # use half precision (FP16) only if using a GPU
+    
+    model = attempt_load(weights, map_location=device)
+    stride = int(model.stride.max())
+    imgsz = check_img_size(imgsz, s=stride) # ensure image size is a multiple of the max stride
+    
+    if half:
+        model.half() # convert model weights to FP16 if using GPU
+    model.eval() # set model to evaluation mode
+    
+    # get class names from model payload
+    names = model.module.names if hasattr(model, 'module') else model.names
+    
+    return model, device, half, stride, imgsz, names
+
+def warmup_model(model,
+                 device, 
+                 imgsz, 
+                 half, 
+                 warmup_iterations) -> None:
+    """
+    Run dummy forward passes to initialise CUDA context on GPUs
+    
+    Args:
+        model: the loaded YOLO model
+        device: the execution device
+        imgsz: the image size used for inference
+        half: sets whether the model is running in FP16
+        warmup_iterations: number of dummy passes to execute
+    """
+    if device.type != "cpu":
+        # create a dummy tensor
+        dummy_img = torch.zeros(1, 3, imgsz, imgsz).to(device).type_as(next(model.parameters()))
+        for _ in range(warmup_iterations):
+            model(dummy_img, dummy_img)
+
+def process_batch(detections, labels, iouv):
+    """
+    Extracted from val.py: Return correct predictions matrix.
+    Both sets of boxes are in (x1, y1, x2, y2) format.
+    Arguments:
+        detections (Array[N, 6]), x1, y1, x2, y2, conf, class
+        labels (Array[M, 5]), class, x1, y1, x2, y2
+    Returns:
+        correct (Array[N, 10]), for 10 IoU levels
+    """
+    correct = torch.zeros(detections.shape[0], iouv.shape[0], dtype=torch.bool, device=iouv.device)
+    iou = box_iou(labels[:, 1:], detections[:, :4])
+    x = torch.where((iou >= iouv[0]) & (labels[:, 0:1] == detections[:, 5])) # IoU above threshold and classes match
+    if x[0].shape[0]:
+        matches = torch.cat((torch.stack(x, 1), iou[x[0], x[1]][:, None]), 1).cpu().numpy() # [label, detection, iou]
+        if x[0].shape[0] > 1:
+            matches = matches[matches[:, 2].argsort()[::-1]]
+            matches = matches[np.unique(matches[:, 1], return_index=True)[1]]
+            matches = matches[np.unique(matches[:, 0], return_index=True)[1]]
+        matches = torch.from_numpy(matches).to(iouv.device)
+        correct[matches[:, 1].long()] = matches[:, 2:3] >= iouv
+    return correct
 
 if __name__ == "__main__":
     pass
