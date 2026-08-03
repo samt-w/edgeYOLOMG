@@ -13,10 +13,10 @@ in video input. It measures the performance of the detection using mAP and FPS.
 # make prediction
 # end timer
 # discard frame in buffer
+# load labels
 # report accuracy and frame time
 # convert accuracy and frame time to mAP and FPS
 
-import os
 import sys
 from pathlib import Path
 
@@ -31,6 +31,8 @@ import torch
 import numpy as np
 from collections import deque
 import time
+import csv
+from datetime import datetime
 
 from data_prep_scripts.MOD_Functions import motion_compensate
 from utils.augmentations import letterbox
@@ -160,9 +162,10 @@ def preprocess_image(image,
     
     return img, (h0, w0)
 
-def run_inference(model,
+def execute_prediction(model,
                   img1,
                   img2,
+                  device,
                   conf_thres = 0.001,
                   iou_thres = 0.4):
     """
@@ -172,19 +175,31 @@ def run_inference(model,
         model: the loaded model
         img1: the RGB frame tensor
         img2: the motion mask tensor
+        device: specify the device for timing synchronisation
         conf_thres: object confidence threshold (default is the standard mAP 0.001)
         iou_thres: IoU threshold (default is the standard NMS 0.4)
         
     Returns a tensor of detections containing [x1, y1, x2, y2, confidence score, class]
+    and the time taken for the forward pass and NMS
     """
+    if device.type != "cpu":
+        torch.cuda.synchronize(device)
+    t0 = time.time()
     with torch.no_grad():
         # forward pass
         pred = model(img1, img2, augment = False)[0]
+
+    if device.type != "cpu":
+        torch.cuda.synchronize(device)
+    t1 = time.time()
         
-        # apply NMS
-        pred = non_max_suppression(pred, conf_thres, iou_thres)[0]
-        
-    return pred
+    # apply NMS
+    pred = non_max_suppression(pred, conf_thres, iou_thres)[0]
+
+    if device.type != "cpu":
+        torch.cuda.synchronize(device)
+    t2 = time.time()
+    return pred, (t1 - t0), (t2 - t1)
 
 def load_labels(label_path,
                       h0,
@@ -285,64 +300,129 @@ def evaluate_frame(pred,
         
     return (correct.cpu(), pred[:, 4].cpu(), pred[:, 5].cpu(), true_class_indices)
 
-def calculate_metrics(frame_times,
+def calculate_metrics(timings,
                       stats,
                       names,
-                      inference_count):
+                      inference_count,
+                      run_config):
     """
-    Calculates and prints the final FPS and mAP metrics
+    Calculates, prints, and saves the final FPS and mAP metrics
     
     Args:
-        frame_times: list of time taken for each processed frame
+        timings: dictionary containing accumulated frame times for each pipeline step
         stats: statistics tuple from evaluate_frame()
         names: dictionary mapping class indices to string names
         inference_count: total number of valid frames processed
+        run_config: dictionary with configuration data for saving to CSV
     """
     print("\n" + "="*40)
     print("BENCHMARK RESULTS")
     print("="*40)
+
+    metrics = {
+        "FPS": 0.0,
+        "Read_ms": 0.0,
+        "Mask_ms": 0.0,
+        "Prep_ms": 0.0,
+        "Inf_ms": 0.0,
+        "NMS_ms": 0.0,
+        "Precision": 0.0,
+        "Recall": 0.0,
+        "mAP_50": 0.0,
+        "mAP_50_95": 0.0
+    }
     
     # latency/FPS calculation
-    if len(frame_times) > 0:
-        mean_time = np.mean(frame_times)
-        fps = 1.0 / mean_time
+    if len(timings["total"]) > 0:
+        mean_total = np.mean(timings["total"])
+        metrics["FPS"] = 1.0 / mean_total
+        metrics["Read_ms"] = np.mean(timings["read"]) * 1000
+        metrics["Mask_ms"] = np.mean(timings["mask"]) * 1000
+        metrics["Prep_ms"] = np.mean(timings["prep"]) * 1000
+        metrics["Inf_ms"] = np.mean(timings["inf"]) * 1000
+        metrics["NMS_ms"] = np.mean(timings["nms"]) * 1000
+
         print(f"Total number of Processed Frames: {inference_count}")
-        print(f"Mean per-frame time: {mean_time*1000:.2f} ms")
-        print(f"Effective Real-Time FPS: {fps:.2f} FPS")
+        print(f"Effective Real-Time FPS: {metrics['FPS']:.2f} FPS")
+        print("\nPipeline Step Latencies (mean):")
+        print(f"Frame Read:    {metrics['Read_ms']:.2f} ms")
+        print(f"Motion Mask:   {metrics['Mask_ms']:.2f} ms")
+        print(f"Preprocess:    {metrics['Prep_ms']:.2f} ms")
+        print(f"Inference:     {metrics['Inf_ms']:.2f} ms")
+        print(f"NMS:           {metrics['NMS_ms']:.2f} ms")
+        print(f"Total time:    {mean_total * 1000:.2f} ms")
     else:
         print("Not enough frames processed to calculate FPS.")
 
     # accuracy/mAP calculation
     if not stats:
         print("\nNo targets or predictions found. Cannot calculate mAP.")
-        print("="*40)
-        return
-
-    # convert stats tuples into arrays
-    stats = [np.concatenate(x, 0) for x in zip(*stats)]
-    
-    if len(stats) and stats[0].any():
-        # compute precision, recall, and AP per class
-        tp, fp, p, r, f1, ap, ap_class = ap_per_class(*stats, plot = False,
-                                                      save_dir = Path(''),
-                                                      names = names)
-        
-        # AP at IoU 0.5
-        ap50 = ap[:, 0]
-        # AP averaged across IoU 0.5 to 0.95
-        ap_095 = ap.mean(1)
-        
-        # compute mean over all classes
-        mp, mr, map50, map_095 = p.mean(), r.mean(), ap50.mean(), ap_095.mean()
-        
-        print("\nAccuracy Metrics (Full Video):")
-        print(f"Precision:    {mp:.4f}")
-        print(f"Recall:       {mr:.4f}")
-        print(f"mAP@0.5:      {map50:.4f}")
-        print(f"mAP@0.5:0.95: {map_095:.4f}")
     else:
-        print("\nNo targets or predictions found. Cannot calculate mAP.")
+        # convert stats tuples into arrays
+        stats = [np.concatenate(x, 0) for x in zip(*stats)]
+        
+        if len(stats) and stats[0].any():
+            # compute precision, recall, and AP per class
+            tp, fp, p, r, f1, ap, ap_class = ap_per_class(*stats, plot = False,
+                                                          save_dir = Path(""),
+                                                          names = names)
+            
+            # AP at IoU 0.5
+            ap50 = ap[:, 0]
+            # AP averaged across IoU 0.5 to 0.95
+            ap_095 = ap.mean(1)
+            
+            # compute mean over all classes
+            metrics["Precision"] = p.mean()
+            metrics["Recall"] = r.mean()
+            metrics["mAP_50"] = ap50.mean()
+            metrics["mAP_50_95"] = ap_095.mean()
+            
+            print("\nAccuracy Metrics (Full Video):")
+            print(f"Precision:    {metrics['Precision']:.4f}")
+            print(f"Recall:       {metrics['Recall']:.4f}")
+            print(f"mAP@0.5:      {metrics['mAP_50']:.4f}")
+            print(f"mAP@0.5:0.95: {metrics['mAP_50_95']:.4f}")
+        else:
+            print("\nNo targets or predictions found. Cannot calculate mAP.")
+
     print("="*40)
+
+    # Save results to CSV
+    csv_file = Path("inference_results.csv")
+    file_exists = csv_file.is_file()
+    
+    headers = [
+        "Run_ID", "Video", "Resolution", "Conf_Thres", "IoU_Thres",
+        "Precision", "Recall", "mAP@0.5", "mAP@0.5:0.95", "FPS",
+        "Read(ms)", "Mask(ms)", "Prep(ms)", "Inference(ms)", "NMS(ms)"
+    ]
+    
+    row_data = [
+        run_config["run_id"],
+        run_config["video_name"],
+        run_config["imgsz"],
+        run_config["conf_thres"],
+        run_config["iou_thres"],
+        f"{metrics['Precision']:.4f}",
+        f"{metrics['Recall']:.4f}",
+        f"{metrics['mAP_50']:.4f}",
+        f"{metrics['mAP_50_95']:.4f}",
+        f"{metrics['FPS']:.2f}",
+        f"{metrics['Read_ms']:.2f}",
+        f"{metrics['Mask_ms']:.2f}",
+        f"{metrics['Prep_ms']:.2f}",
+        f"{metrics['Inf_ms']:.2f}",
+        f"{metrics['NMS_ms']:.2f}"
+    ]
+    
+    with open(csv_file, mode="a", newline="") as f:
+        writer = csv.writer(f)
+        if not file_exists:
+            writer.writerow(headers)
+        writer.writerow(row_data)
+        
+    print(f"Results appended to {csv_file.resolve()}")
 
 def run_inference(video_path,
                   label_dir,
@@ -373,6 +453,9 @@ def run_inference(video_path,
     label_dir = Path(label_dir)
     video_name = video_path.stem
 
+        # create run identifier
+    run_id = datetime.now().strftime("%Y%d%m-%H%M%S-YOLOMG-Inference-Run")
+
     # initialise model
     print(f"Loading weights from {weights}...")
     model, device, half, stride, imgsz, names = load_model_and_device(weights, device_id, imgsz)
@@ -390,8 +473,17 @@ def run_inference(video_path,
     
     frame_count = 0
     inference_count = 0
-    frame_times = []
     stats = []
+
+    # create dictionaries to hold timings
+    timings = {
+        "total": [],
+        "read": [],
+        "mask": [],
+        "prep": [],
+        "inf": [],
+        "nms": []
+    }
     
     print(f"Starting inference evaluation for {video_name}...")
     
@@ -399,10 +491,12 @@ def run_inference(video_path,
         # start timing
         if device.type != 'cpu': 
             torch.cuda.synchronize(device)
-        t_start = time.time()
+        t_pipeline_start = time.time()
         
         # read frame
+        t_read_start = time.time()
         ret, frame = cap.read()
+        t_read_end = time.time()
         if not ret or frame is None:
             break
             
@@ -417,25 +511,37 @@ def run_inference(video_path,
         target_frame_idx = frame_count - 2
         
         # compute motion mask
+        t_mask_start = time.time()
         mask = compute_mask_in_memory(frame_buffer[0], frame_buffer[2], frame_buffer[4])
-        
+        t_mask_end = time.time()
         # preprocess target images
+        if device.type != "cpu":
+            torch.cuda.synchronize(device)
+        t_prep_start = time.time()
+
         img1, (h0, w0) = preprocess_image(target_frame, imgsz, stride, device, half)
         img2, _ = preprocess_image(mask, imgsz, stride, device, half)
 
+        if device.type != "cpu":
+            torch.cuda.synchronize(device)
+        t_prep_end = time.time()
         # run inference and non-maximum suppression
-        pred = run_inference(model, img1, img2, conf_thres, iou_thres)
-
+        pred, t_inf, t_nms = execute_prediction(model, img1, img2, device, conf_thres, iou_thres)
         # end timing
         if device.type != 'cpu': 
             torch.cuda.synchronize(device)
-        t_end = time.time()
+        t_pipeline_end = time.time()
         
         inference_count += 1
         
         # only record frame times after the warmup period, to avoid spoilt averages
         if inference_count > warmup_frames:
-            frame_times.append(t_end - t_start)
+            timings["read"].append(t_read_end - t_read_start)
+            timings["mask"].append(t_mask_end - t_mask_start)
+            timings["prep"].append(t_prep_end - t_prep_start)
+            timings["inf"].append(t_inf)
+            timings["nms"].append(t_nms)
+            timings["total"].append(t_pipeline_end - t_pipeline_start)
 
         # load original labels
         label_path = label_dir / f"{video_name}_{target_frame_idx:04d}.txt"
@@ -455,14 +561,34 @@ def run_inference(video_path,
 
         # running report on pipeline FPS
         if inference_count % 100 == 0:
-            current_fps = 1.0 / np.mean(frame_times) if frame_times else 0.0
+            current_fps = 1.0 / np.mean(timings["total"]) if timings["total"] else 0.0
             print(f"Processed {inference_count} frames... Current Pipeline FPS: {current_fps:.2f}")
 
     cap.release()
 
+    # create config for CSV export
+    run_config = {
+        "run_id": run_id,
+        "video_name": video_name,
+        "imgsz": imgsz,
+        "conf_thres": conf_thres,
+        "iou_thres": iou_thres
+    }
+
     # compute and display metrics
     names_dict = dict(enumerate(names))
-    calculate_metrics(frame_times, stats, names_dict, inference_count)
+    calculate_metrics(timings, stats, names_dict, inference_count, run_config)
 
 if __name__ == "__main__":
-    pass
+    VIDEO_FILE = "C:/Users/samta/OneDrive/ARD100/test_videos/phantom02.mp4" 
+    LABEL_DIR = "C:/Users/samta/OneDrive/ARD100/annotations/phantom02"
+    WEIGHTS = "./yolomg-stw/runs/train/ARD100_mask32-640_uavs/weights/best.pt"
+
+    run_inference(video_path = VIDEO_FILE,
+                  label_dir = LABEL_DIR,
+                  weights = WEIGHTS,
+                  imgsz = 640,
+                  device_id = "0",
+                  conf_thres = 0.001,
+                  iou_thres = 0.4,
+                  warmup_frames = 30)
