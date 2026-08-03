@@ -626,7 +626,7 @@ def run_inference_directory(video_dir,
         overall_stats.extend(video_stats)
         overall_inference_count += video_inference_count
 
-    # Calculate metrics for the OVERALL SUMMARY
+    # calculate metrics for the overall summary
     if overall_inference_count > 0:
         print("\n=== COMPUTING OVERALL TEST RUN SUMMARY ===")
         summary_config = run_config.copy()
@@ -634,7 +634,7 @@ def run_inference_directory(video_dir,
         calculate_metrics(overall_timings, overall_stats, names_dict, overall_inference_count, summary_config)
 
     # Upload updated inference_results.csv to ClearML as an artifact
-    csv_path = Path(f"{run_group_id}_inference_results.csv")
+    csv_path = Path(f"{run_group_id}_inference-results.csv")
     if csv_path.exists():
         task.upload_artifact(
             name=f"Inference_Results_{run_group_id}",

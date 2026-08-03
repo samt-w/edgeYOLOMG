@@ -11,6 +11,8 @@ data_processed_ARD100/
 data_prep_scripts/verify_overlays/
 data_prep_scripts/mask_telemetry.log
 ~$training_run_data_analysis.xlsx
+*inference-results.csv
+*inference_results.csv
 
 # Model training runs
 runs/
