@@ -15,9 +15,11 @@ RECOMMENDED_CORES = int(total_cores * 0.8)
 ### DIRECTORY FILEPATHS FOR DATASETS
 
 # Raw Data Paths
+PROJECT_ROOT = Path(os.getenv("PROJECT_ROOT"))
 RAW_DATA_DIR = Path(os.getenv("RAW_DATA_DIR"))
 TRAIN_VIDEOS_DIR = RAW_DATA_DIR / "train_videos"
 TEST_VIDEOS_DIR = RAW_DATA_DIR / "test_videos"
+TEST_VIDEOS_DIR_MINIMUM = RAW_DATA_DIR / "test_videos_minimum"
 ANNOTATIONS_DIR = RAW_DATA_DIR / "annotations"
 
 # Processed Data Paths

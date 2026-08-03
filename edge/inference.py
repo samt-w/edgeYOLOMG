@@ -18,7 +18,7 @@ in video input. It measures the performance of the detection using mAP and FPS.
 # convert accuracy and frame time to mAP and FPS
 
 import sys
-import config
+from config import TEST_VIDEOS_DIR, TEST_VIDEOS_DIR_MINIMUM, LABELS_TEST_DIR, PROJECT_ROOT
 from pathlib import Path
 
 # add repo root filepath dynamically to import modules from other directories
@@ -399,7 +399,7 @@ def calculate_metrics(timings,
     print("="*40)
 
     # Save results to CSV
-    csv_file = Path("inference_results.csv")
+    csv_file = Path(f"{run_config['run_group_id']}_inference-results.csv")
     file_exists = csv_file.is_file()
     
     headers = [
@@ -468,8 +468,8 @@ def run_inference_directory(video_dir,
     label_dir = Path(label_dir)
 
     # create run identifier
-    run_time = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_group_id = f"{run_time}-YOLOMG-Inference-Run"
+    run_time = datetime.now().strftime("%Y%m%d-%H%M%S")
+    run_group_id = f"YOLOMG-Inference-Run_{run_time}"
 
     # initialise ClearML task
     task = Task.init(
@@ -634,7 +634,7 @@ def run_inference_directory(video_dir,
         calculate_metrics(overall_timings, overall_stats, names_dict, overall_inference_count, summary_config)
 
     # Upload updated inference_results.csv to ClearML as an artifact
-    csv_path = Path("inference_results.csv")
+    csv_path = Path(f"{run_group_id}_inference_results.csv")
     if csv_path.exists():
         task.upload_artifact(
             name=f"Inference_Results_{run_group_id}",
@@ -644,13 +644,13 @@ def run_inference_directory(video_dir,
 
     task.close()
 if __name__ == "__main__":
-    TEST_VIDEOS_DIR = "C:/Users/samta/OneDrive/ARD100/test_videos"
-    LABEL_DIR = "C:/Users/samta/programming/python/yolomg-stw/data_processed_ARD100/labels/test"
-    WEIGHTS = "C:/Users/samta/programming/python/yolomg-stw/runs/train/ARD100_mask32-640_uavs/weights/best.pt"
+    TEST_VIDEOS_DIR = TEST_VIDEOS_DIR
+    LABEL_DIR = LABELS_TEST_DIR
+    WEIGHTS = PROJECT_ROOT / "runs/train/ARD100_mask32-640_uavs/weights/best.pt"
 
     # FOR TESTING THIS INFERENCE PIPELINE WITH JUST A SINGLE VIDEO
 
-    TEST_VIDEOS_DIR_MINIMUM = "C:/Users/samta/OneDrive/ARD100/test_videos_minimum"
+    TEST_VIDEOS_DIR_MINIMUM = TEST_VIDEOS_DIR_MINIMUM
 
     run_inference_directory(video_dir = TEST_VIDEOS_DIR_MINIMUM,
                             label_dir = LABEL_DIR,
