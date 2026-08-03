@@ -29,6 +29,9 @@ if str(ROOT) not in sys.path:
 import cv2
 import torch
 import numpy as np
+from collections import deque
+import time
+
 from data_prep_scripts.MOD_Functions import motion_compensate
 from utils.augmentations import letterbox
 from utils.metrics import box_iou, ap_per_class
@@ -183,7 +186,7 @@ def run_inference(model,
         
     return pred
 
-def load_ground_truth(label_path,
+def load_labels(label_path,
                       h0,
                       w0, 
                       device):
@@ -340,6 +343,126 @@ def calculate_metrics(frame_times,
     else:
         print("\nNo targets or predictions found. Cannot calculate mAP.")
     print("="*40)
+
+def run_inference(video_path,
+                  label_dir,
+                  weights,
+                  imgsz,
+                  device_id,
+                  conf_thres = 0.001,
+                  iou_thres = 0.4,
+                  warmup_frames = 30):
+    """
+    Collates the inference pipeline:
+    - video loading
+    - frame buffering
+    - pipeline timing
+    - inference evaluation and metric reporting
+    
+    Args:
+        video_path: path to the input video
+        label_dir: directory containing frame .txt labels
+        weights: path to model .pt weights
+        imgsz: image size
+        device_id: hardware device ID (e.g. "0" for GPU)
+        conf_thres: object confidence threshold (default is the standard mAP 0.001)
+        iou_thres: IoU threshold (default is the standard NMS 0.4)
+        warmup_frames: number of frames to ignore in latency calculations (default is 30)
+    """
+    video_path = Path(video_path)
+    label_dir = Path(label_dir)
+    video_name = video_path.stem
+
+    # initialise model
+    print(f"Loading weights from {weights}...")
+    model, device, half, stride, imgsz, names = load_model_and_device(weights, device_id, imgsz)
+    
+    print("Warming up CUDA context...")
+    warmup_model(model, device, imgsz, warmup_iterations = 3)
+    
+    # initialise array for mAP50:90 calculation
+    iou_vector = torch.linspace(0.5, 0.95, 10, device = device)
+    iou_num = iou_vector.numel()
+
+    # initialise video and buffer
+    cap = cv2.VideoCapture(str(video_path))
+    frame_buffer = deque(maxlen = 5)
+    
+    frame_count = 0
+    inference_count = 0
+    frame_times = []
+    stats = []
+    
+    print(f"Starting inference evaluation for {video_name}...")
+    
+    while cap.isOpened():
+        # start timing
+        if device.type != 'cpu': 
+            torch.cuda.synchronize(device)
+        t_start = time.time()
+        
+        # read frame
+        ret, frame = cap.read()
+        if not ret or frame is None:
+            break
+            
+        frame_count += 1
+        frame_buffer.append(frame)
+
+        # skip inference until 5-frame buffer populated
+        if len(frame_buffer) < 5:
+            continue
+
+        target_frame = frame_buffer[2]
+        target_frame_idx = frame_count - 2
+        
+        # compute motion mask
+        mask = compute_mask_in_memory(frame_buffer[0], frame_buffer[2], frame_buffer[4])
+        
+        # preprocess target images
+        img1, (h0, w0) = preprocess_image(target_frame, imgsz, stride, device, half)
+        img2, _ = preprocess_image(mask, imgsz, stride, device, half)
+
+        # run inference and non-maximum suppression
+        pred = run_inference(model, img1, img2, conf_thres, iou_thres)
+
+        # end timing
+        if device.type != 'cpu': 
+            torch.cuda.synchronize(device)
+        t_end = time.time()
+        
+        inference_count += 1
+        
+        # only record frame times after the warmup period, to avoid spoilt averages
+        if inference_count > warmup_frames:
+            frame_times.append(t_end - t_start)
+
+        # load original labels
+        label_path = label_dir / f"{video_name}_{target_frame_idx:04d}.txt"
+        labels, true_class_indices = load_labels(label_path, h0, w0, device)
+
+        # evaluate predictions
+        frame_stats = evaluate_frame(pred,
+                                     labels,
+                                     true_class_indices,
+                                     h0,
+                                     w0,
+                                     img1.shape[2:],
+                                     iou_vector,
+                                     iou_num)
+        if frame_stats:
+            stats.append(frame_stats)
+
+        # running report on pipeline FPS
+        if inference_count % 100 == 0:
+            current_fps = 1.0 / np.mean(frame_times) if frame_times else 0.0
+            print(f"Processed {inference_count} frames... Current Pipeline FPS: {current_fps:.2f}")
+
+    cap.release()
+
+    # compute and display metrics
+    names_dict = dict(enumerate(names))
+    calculate_metrics(frame_times, stats, names_dict, inference_count)
 
 if __name__ == "__main__":
     pass
