@@ -129,7 +129,8 @@ def preprocess_image(image,
                      imgsz,
                      stride,
                      device,
-                     half):
+                     half,
+                     pad_colour):
     """
     Resizes, pads, and normalises the numpy image array into the pytorch tensor
     
@@ -139,6 +140,7 @@ def preprocess_image(image,
         stride: model's maximum stride (for padding calculation)
         device: execution device
         half: sets whether to convert the tensor to FP16
+        pad_colour: a three-integer tuple setting the colour of the letterbox padding (should be black if no motion)
         
     Returns a tuple (tensor_image, (h0, w0)) where tensor_image is the processed pytorch tensor 
     and (h0, w0) is the original image height and width
@@ -148,6 +150,8 @@ def preprocess_image(image,
     # pad and resize the image while maintaining aspect ratio
     img = letterbox(im = image,
                     new_shape = (imgsz, imgsz),
+                    color = pad_colour, # force specific padding colour
+                    auto = False, # force square padding to match val.py
                     stride = stride)[0]
     
     # convert from OpenCV's default BGR to RGB
@@ -559,8 +563,8 @@ def run_inference_directory(video_dir,
                 torch.cuda.synchronize(device)
             t_prep_start = time.time()
 
-            img1, (h0, w0) = preprocess_image(target_frame, imgsz, stride, device, half)
-            img2, _ = preprocess_image(mask, imgsz, stride, device, half)
+            img1, (h0, w0) = preprocess_image(target_frame, imgsz, stride, device, half, pad_colour=(114, 114, 114)) # grey padding for RGB
+            img2, _ = preprocess_image(mask, imgsz, stride, device, half, pad_colour=(0, 0, 0)) # black padding for masks
 
             if device.type != "cpu":
                 torch.cuda.synchronize(device)
