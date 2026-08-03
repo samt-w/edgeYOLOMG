@@ -327,6 +327,7 @@ def calculate_metrics(timings,
         "Prep_ms": 0.0,
         "Inf_ms": 0.0,
         "NMS_ms": 0.0,
+        "Total_ms": 0.0,
         "Precision": 0.0,
         "Recall": 0.0,
         "mAP_50": 0.0,
@@ -345,6 +346,7 @@ def calculate_metrics(timings,
         metrics["Prep_ms"] = np.mean(timings["prep"]) * 1000
         metrics["Inf_ms"] = mean_inf * 1000
         metrics["NMS_ms"] = mean_nms * 1000
+        metrics["Total_ms"] = mean_total * 1000
 
         print(f"Total number of Processed Frames: {inference_count}")
         print(f"Effective Real-Time FPS: {metrics['FPS_Full_Pipeline']:.2f} FPS")
@@ -355,7 +357,7 @@ def calculate_metrics(timings,
         print(f"Preprocess:  {metrics['Prep_ms']:.2f} ms")
         print(f"Inference:   {metrics['Inf_ms']:.2f} ms")
         print(f"NMS:         {metrics['NMS_ms']:.2f} ms")
-        print(f"Total time:  {mean_total * 1000:.2f} ms")
+        print(f"Total time:  {metrics['Total_ms']:.2f} ms")
     else:
         print("Not enough frames processed to calculate FPS.")
 
@@ -402,7 +404,7 @@ def calculate_metrics(timings,
         "Run_Group_ID", "Video", "Resolution", "Conf_Thres", "IoU_Thres", "Weights",
         "Precision", "Recall", "mAP@0.5", "mAP@0.5:0.95", 
         "FPS(Pipeline)", "FPS(Inference_Only)", 
-        "Read(ms)", "Mask(ms)", "Prep(ms)", "Inference(ms)", "NMS(ms)"
+        "Read(ms)", "Mask(ms)", "Prep(ms)", "Inference(ms)", "NMS(ms)", "Total(ms)"
     ]
     
     row_data = [
@@ -422,7 +424,8 @@ def calculate_metrics(timings,
         f"{metrics['Mask_ms']:.2f}",
         f"{metrics['Prep_ms']:.2f}",
         f"{metrics['Inf_ms']:.2f}",
-        f"{metrics['NMS_ms']:.2f}"
+        f"{metrics['NMS_ms']:.2f}",
+        f"{metrics['Total_ms']:.2f}"
     ]
     
     with open(csv_file, mode="a", newline="") as f:
