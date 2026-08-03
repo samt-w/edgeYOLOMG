@@ -31,7 +31,7 @@ import numpy as np
 from data_prep_scripts.MOD_Functions import motion_compensate
 from utils.augmentations import letterbox
 from utils.metrics import box_iou
-from utils.general import check_img_size
+from utils.general import check_img_size, non_max_suppression, xywhn2xyxy
 from utils.torch_utils import select_device
 from models.experimental import attempt_load
 
@@ -151,10 +151,70 @@ def preprocess_image(image,
     img = img.half() if half else img.float()  # convert uint8 to fp16/32
     img /= 255.0  # normalise pixel values from [0, 255] to [0, 1]
     
-    # Add batch dimension (1, C, H, W)
+    # add batch dimension (1, C, H, W)
     img = img.unsqueeze(0)
     
     return img, (h0, w0)
+
+def run_inference(model,
+                  img1,
+                  img2,
+                  conf_thres = 0.001,
+                  iou_thres = 0.4):
+    """
+    Executes forward pass on a single frame and apply non-maximum suppression
+    
+    Args:
+        model: the loaded model
+        img1: the RGB frame tensor
+        img2: the motion mask tensor
+        conf_thres: object confidence threshold (default is the standard mAP 0.001)
+        iou_thres: IoU threshold (default is the standard NMS 0.4)
+        
+    Returns a tensor of detections containing [x1, y1, x2, y2, confidence score, class]
+    """
+    with torch.no_grad():
+        # forward pass
+        pred = model(img1, img2, augment = False)[0]
+        
+        # apply NMS
+        pred = non_max_suppression(pred, conf_thres, iou_thres)[0]
+        
+    return pred
+
+def load_ground_truth(label_path,
+                      h0,
+                      w0, 
+                      device):
+    """
+    Read YOLO-format ground truth labels from a .txt file and convert to absolute coordinates
+    
+    Args:
+        label_path: path to the .txt file
+        h0: original image height
+        w0: original image width
+        device: device to place the label tensor on
+        
+    Returns a tuple (labels, true_class_indices) where labels (num_labels, 5) contains
+    absolute coordinates [class, x1, y1, x2, y2], and true_class_indices is a list
+    """
+    true_class_indices = []
+    # initialise the empty labels array
+    labels = torch.zeros((0, 5), device = device)
+    
+    if label_path.exists():
+        with open(label_path, "r") as f:
+            # read non-empty lines
+            label = [x.split() for x in f.read().strip().splitlines() if len(x)]
+            if len(lb):
+                lb = np.array(lb, dtype=np.float32)
+                true_class_indices = lb[:, 0].tolist()
+                
+                # Convert normalised [x_center, y_center, width, height] to absolute [x1, y1, x2, y2]
+                lb[:, 1:5] = xywhn2xyxy(lb[:, 1:5], w = w0, h = h0)
+                labels = torch.from_numpy(lb).to(device)
+                
+    return (labels, true_class_indices)
 
 def process_batch(detections, labels, iouv):
     """
