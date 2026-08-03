@@ -18,6 +18,7 @@ in video input. It measures the performance of the detection using mAP and FPS.
 # convert accuracy and frame time to mAP and FPS
 
 import sys
+import config
 from pathlib import Path
 
 # add repo root filepath dynamically to import modules from other directories
@@ -29,6 +30,7 @@ if str(ROOT) not in sys.path:
 import cv2
 import torch
 import numpy as np
+from clearml import Task
 from collections import deque
 import time
 import csv
@@ -450,6 +452,7 @@ def run_inference_directory(video_dir,
     - frame buffering
     - pipeline timing
     - inference evaluation and metric reporting
+    - ClearML task logging
     
     Args:
         video_dir: path to the directory of input videos
@@ -465,7 +468,16 @@ def run_inference_directory(video_dir,
     label_dir = Path(label_dir)
 
     # create run identifier
-    run_group_id = datetime.now().strftime("%Y%m%d-%H%M%S-YOLOMG-Test-Run")
+    run_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_group_id = f"{run_time}-YOLOMG-Inference-Run"
+
+    # initialise ClearML task
+    task = Task.init(
+        project_name="YOLOMG-STW",
+        task_name=f"YOLOMG-STW-inference_{run_time}",
+        output_uri=False,
+        reuse_last_task_id=False
+    )
 
     # initialise model
     print(f"Loading weights from {weights}...")
@@ -482,6 +494,7 @@ def run_inference_directory(video_dir,
     video_files = list(video_dir.glob("*.mp4"))
     if not video_files:
         print(f"No .mp4 files found in {video_dir}")
+        task.close()
         return
 
     # initialise empty structures for overall performance summary
@@ -620,12 +633,26 @@ def run_inference_directory(video_dir,
         summary_config["video_name"] = "OVERALL_SUMMARY"
         calculate_metrics(overall_timings, overall_stats, names_dict, overall_inference_count, summary_config)
 
+    # Upload updated inference_results.csv to ClearML as an artifact
+    csv_path = Path("inference_results.csv")
+    if csv_path.exists():
+        task.upload_artifact(
+            name=f"Inference_Results_{run_group_id}",
+            artifact_object=str(csv_path)
+        )
+        print(f"Uploaded {csv_path} as artifact to ClearML task {task.id}")
+
+    task.close()
 if __name__ == "__main__":
     TEST_VIDEOS_DIR = "C:/Users/samta/OneDrive/ARD100/test_videos"
     LABEL_DIR = "C:/Users/samta/programming/python/yolomg-stw/data_processed_ARD100/labels/test"
     WEIGHTS = "C:/Users/samta/programming/python/yolomg-stw/runs/train/ARD100_mask32-640_uavs/weights/best.pt"
 
-    run_inference_directory(video_dir = TEST_VIDEOS_DIR,
+    # FOR TESTING THIS INFERENCE PIPELINE WITH JUST A SINGLE VIDEO
+
+    TEST_VIDEOS_DIR_MINIMUM = "C:/Users/samta/OneDrive/ARD100/test_videos_minimum"
+
+    run_inference_directory(video_dir = TEST_VIDEOS_DIR_MINIMUM,
                             label_dir = LABEL_DIR,
                             weights = WEIGHTS,
                             imgsz = 640,
