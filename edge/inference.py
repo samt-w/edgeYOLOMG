@@ -29,7 +29,9 @@ import cv2
 import torch
 import numpy as np
 from data_prep_scripts.MOD_Functions import motion_compensate
-from utils.general import box_iou, check_img_size
+from utils.augmentations import letterbox
+from utils.metrics import box_iou
+from utils.general import check_img_size
 from utils.torch_utils import select_device
 from models.experimental import attempt_load
 
@@ -99,8 +101,7 @@ def load_model_and_device(weights, device_id, imgsz):
 def warmup_model(model,
                  device, 
                  imgsz, 
-                 half, 
-                 warmup_iterations) -> None:
+                 warmup_iterations):
     """
     Run dummy forward passes to initialise CUDA context on GPUs
     
@@ -108,7 +109,6 @@ def warmup_model(model,
         model: the loaded YOLO model
         device: the execution device
         imgsz: the image size used for inference
-        half: sets whether the model is running in FP16
         warmup_iterations: number of dummy passes to execute
     """
     if device.type != "cpu":
@@ -116,6 +116,45 @@ def warmup_model(model,
         dummy_img = torch.zeros(1, 3, imgsz, imgsz).to(device).type_as(next(model.parameters()))
         for _ in range(warmup_iterations):
             model(dummy_img, dummy_img)
+
+def preprocess_image(image, 
+                     imgsz,
+                     stride,
+                     device,
+                     half):
+    """
+    Resizes, pads, and normalises the numpy image array into the pytorch tensor
+    
+    Args:
+        image: the raw BGR image array 
+        imgsz: target image inference size
+        stride: model's maximum stride (for padding calculation)
+        device: execution device
+        half: sets whether to convert the tensor to FP16
+        
+    Returns a tuple (tensor_image, (h0, w0)) where tensor_image is the processed pytorch tensor 
+    and (h0, w0) is the original image height and width
+    """
+    h0, w0 = image.shape[:2]
+    
+    # pad and resize the image while maintaining aspect ratio
+    img = letterbox(im = image,
+                    new_shape = (imgsz, imgsz),
+                    stride = stride)[0]
+    
+    # convert from OpenCV's default BGR to RGB
+    img = img[:, :, ::-1].transpose(2, 0, 1)
+    img = np.ascontiguousarray(img)  # optimise memory layout for pytorch
+    
+    # convert to tensor and transfer to target device
+    img = torch.from_numpy(img).to(device)
+    img = img.half() if half else img.float()  # convert uint8 to fp16/32
+    img /= 255.0  # normalise pixel values from [0, 255] to [0, 1]
+    
+    # Add batch dimension (1, C, H, W)
+    img = img.unsqueeze(0)
+    
+    return img, (h0, w0)
 
 def process_batch(detections, labels, iouv):
     """
