@@ -1,7 +1,8 @@
 """
-this script takes trained YOLOMG .pt weights and uses them to 
-detect drones in video input. It measures the performance of the detection
-using mAP and FPS.
+this script is adapted from val.py
+
+it takes trained YOLOMG .pt weights and uses them to detect drones 
+in video input. It measures the performance of the detection using mAP and FPS.
 """
 
 # read video
@@ -30,8 +31,8 @@ import torch
 import numpy as np
 from data_prep_scripts.MOD_Functions import motion_compensate
 from utils.augmentations import letterbox
-from utils.metrics import box_iou
-from utils.general import check_img_size, non_max_suppression, xywhn2xyxy
+from utils.metrics import box_iou, ap_per_class
+from utils.general import check_img_size, non_max_suppression, xywhn2xyxy, scale_coords
 from utils.torch_utils import select_device
 from models.experimental import attempt_load
 
@@ -200,29 +201,30 @@ def load_ground_truth(label_path,
     """
     true_class_indices = []
     # initialise the empty labels array
-    labels = torch.zeros((0, 5), device = device)
+    labels_pt_tensor = torch.zeros((0, 5), device = device)
     
     if label_path.exists():
         with open(label_path, "r") as f:
             # read non-empty lines
-            label = [x.split() for x in f.read().strip().splitlines() if len(x)]
-            if len(lb):
-                lb = np.array(lb, dtype=np.float32)
-                true_class_indices = lb[:, 0].tolist()
+            labels = [x.split() for x in f.read().strip().splitlines() if len(x)]
+            if len(labels):
+                labels = np.array(labels, dtype = np.float32)
+                true_class_indices = labels[:, 0].tolist()
                 
                 # Convert normalised [x_center, y_center, width, height] to absolute [x1, y1, x2, y2]
-                lb[:, 1:5] = xywhn2xyxy(lb[:, 1:5], w = w0, h = h0)
-                labels = torch.from_numpy(lb).to(device)
+                labels[:, 1:5] = xywhn2xyxy(labels[:, 1:5], w = w0, h = h0)
+                labels_pt_tensor = torch.from_numpy(labels).to(device)
                 
-    return (labels, true_class_indices)
+    return (labels_pt_tensor, true_class_indices)
 
 def process_batch(detections, labels, iouv):
     """
     Extracted from val.py: Return correct predictions matrix.
     Both sets of boxes are in (x1, y1, x2, y2) format.
-    Arguments:
+    Args:
         detections (Array[N, 6]), x1, y1, x2, y2, conf, class
         labels (Array[M, 5]), class, x1, y1, x2, y2
+        iouv - the vector of IoU thresholds to be tested
     Returns:
         correct (Array[N, 10]), for 10 IoU levels
     """
@@ -238,6 +240,106 @@ def process_batch(detections, labels, iouv):
         matches = torch.from_numpy(matches).to(iouv.device)
         correct[matches[:, 1].long()] = matches[:, 2:3] >= iouv
     return correct
+
+def evaluate_frame(pred,
+                   labels,
+                   true_class_indices,
+                   h0,
+                   w0,
+                   processed_shape,
+                   iou_vector,
+                   iou_num):
+    """
+    Evaluates predictions against ground truth labels for a single frame
+    
+    Args:
+        pred: model predictions [N, 6]
+        labels: ground truth labels [M, 5]
+        true_class_indices: list of true class indices
+        h0: original image height
+        w0: original image width
+        processed_shape: shape of the letterboxed image tensor (H, W)
+        iou_vector: vector of IoU thresholds to test
+        iou_num: total number of IoU thresholds
+        
+    Returns a tuple formatted for ap_per_class() - (correct, confidences, predicted_classes, true_classes)
+    """
+    if len(pred) == 0:
+        if len(labels):
+            return (torch.zeros(0, iou_num, dtype=torch.bool), torch.Tensor(), torch.Tensor(), true_class_indices)
+        return None
+        
+    # rescale predictions from the padded image back to the native original image dimensions
+    predn = pred.clone()
+    predn[:, :4] = scale_coords(processed_shape, predn[:, :4], (h0, w0)).round()
+    
+    if len(labels):
+        # compute IoU between predictions and true labels
+        correct = process_batch(predn, labels, iou_vector)
+    else:
+        # if no positive class exists, all predictions are False
+        correct = torch.zeros(pred.shape[0], iou_num, dtype = torch.bool)
+        
+    return (correct.cpu(), pred[:, 4].cpu(), pred[:, 5].cpu(), true_class_indices)
+
+def calculate_metrics(frame_times,
+                      stats,
+                      names,
+                      inference_count):
+    """
+    Calculates and prints the final FPS and mAP metrics
+    
+    Args:
+        frame_times: list of time taken for each processed frame
+        stats: statistics tuple from evaluate_frame()
+        names: dictionary mapping class indices to string names
+        inference_count: total number of valid frames processed
+    """
+    print("\n" + "="*40)
+    print("BENCHMARK RESULTS")
+    print("="*40)
+    
+    # latency/FPS calculation
+    if len(frame_times) > 0:
+        mean_time = np.mean(frame_times)
+        fps = 1.0 / mean_time
+        print(f"Total number of Processed Frames: {inference_count}")
+        print(f"Mean per-frame time: {mean_time*1000:.2f} ms")
+        print(f"Effective Real-Time FPS: {fps:.2f} FPS")
+    else:
+        print("Not enough frames processed to calculate FPS.")
+
+    # accuracy/mAP calculation
+    if not stats:
+        print("\nNo targets or predictions found. Cannot calculate mAP.")
+        print("="*40)
+        return
+
+    # convert stats tuples into arrays
+    stats = [np.concatenate(x, 0) for x in zip(*stats)]
+    
+    if len(stats) and stats[0].any():
+        # compute precision, recall, and AP per class
+        tp, fp, p, r, f1, ap, ap_class = ap_per_class(*stats, plot = False,
+                                                      save_dir = Path(''),
+                                                      names = names)
+        
+        # AP at IoU 0.5
+        ap50 = ap[:, 0]
+        # AP averaged across IoU 0.5 to 0.95
+        ap_095 = ap.mean(1)
+        
+        # compute mean over all classes
+        mp, mr, map50, map_095 = p.mean(), r.mean(), ap50.mean(), ap_095.mean()
+        
+        print("\nAccuracy Metrics (Full Video):")
+        print(f"Precision:    {mp:.4f}")
+        print(f"Recall:       {mr:.4f}")
+        print(f"mAP@0.5:      {map50:.4f}")
+        print(f"mAP@0.5:0.95: {map_095:.4f}")
+    else:
+        print("\nNo targets or predictions found. Cannot calculate mAP.")
+    print("="*40)
 
 if __name__ == "__main__":
     pass
