@@ -799,7 +799,7 @@ def run_inference_directory(video_dir,
             global_inference_count += 1
             
             # only record frame times after the warmup period, to avoid spoilt averages
-            if global_inference_count > warmup_frames:
+            if video_inference_count > warmup_frames:
                 video_timings["read"].append(payload["t_read"])
                 video_timings["mask"].append(payload["t_mask"])
                 video_timings["prep"].append(payload["t_prep"])
@@ -878,7 +878,7 @@ if __name__ == "__main__":
 
     TEST_VIDEOS_DIR_MINIMUM = TEST_VIDEOS_DIR_MINIMUM
 
-    run_inference_directory(video_dir = TEST_VIDEOS_DIR_MINIMUM,
+    run_inference_directory(video_dir = TEST_VIDEOS_DIR,
                             label_dir = LABEL_DIR,
                             weights = WEIGHTS,
                             imgsz = 640,
