@@ -5,6 +5,7 @@ it takes trained YOLOMG .pt weights and uses them to detect drones
 in video input. It measures the performance of the detection using mAP and FPS.
 """
 
+### ORIGINAL PLAN FOR FUNCTIONS
 # read video
 # allow buffer to be initialised (to warm up GPU and for motion masks)
 # begin timer
@@ -151,7 +152,7 @@ def preprocess_image(image,
     img = letterbox(im = image,
                     new_shape = (imgsz, imgsz),
                     color = pad_colour, # force specific padding colour
-                    auto = False, # force square padding to match val.py
+                    auto = True, # force minimum-stride padding to match val.py's "rect = False if task == 'benchmark' else pt"
                     stride = stride)[0]
     
     # convert from OpenCV's default BGR to RGB
@@ -210,7 +211,8 @@ def execute_prediction(model,
 def load_labels(label_path,
                 h0,
                 w0, 
-                device):
+                device,
+                min_area = 25):
     """
     Read YOLO-format ground truth labels from a .txt file and convert to absolute coordinates
     
@@ -219,6 +221,7 @@ def load_labels(label_path,
         h0: original image height
         w0: original image width
         device: device to place the label tensor on
+        min_area: minimum area (in pixels) for a bounding box to be valid (original repo set 25px)
         
     Returns a tuple (labels, true_class_indices) where labels (num_labels, 5) contains
     absolute coordinates [class, x1, y1, x2, y2], and true_class_indices is a list
@@ -233,11 +236,19 @@ def load_labels(label_path,
             labels = [x.split() for x in f.read().strip().splitlines() if len(x)]
             if len(labels):
                 labels = np.array(labels, dtype = np.float32)
-                true_class_indices = labels[:, 0].tolist()
                 
-                # Convert normalised [x_center, y_center, width, height] to absolute [x1, y1, x2, y2]
+                # convert normalised [x_center, y_center, width, height] to absolute [x1, y1, x2, y2]
                 labels[:, 1:5] = xywhn2xyxy(labels[:, 1:5], w = w0, h = h0)
-                labels_pt_tensor = torch.from_numpy(labels).to(device)
+
+                # apply area filter (same logic as original repo)
+                areas = (labels[:, 3] - labels[:, 1]) * (labels[:, 4] - labels[:, 2])
+                valid_mask = areas >= min_area
+                labels = labels[valid_mask]
+                
+                # only include frames with positive class labels
+                if len(labels):
+                    true_class_indices = labels[:, 0].tolist()
+                    labels_pt_tensor = torch.from_numpy(labels).to(device)
                 
     return (labels_pt_tensor, true_class_indices)
 
@@ -553,6 +564,15 @@ def run_inference_directory(video_dir,
 
             target_frame = frame_buffer[2]
             target_frame_idx = frame_count - 2
+
+            # extract original image height and width to scale labels
+            h0_orig, w0_orig = target_frame.shape[:2]
+            label_path = label_dir / f"{video_name}_{target_frame_idx:04d}.txt"
+            labels, true_class_indices = load_labels(label_path, h0_orig, w0_orig, device)
+            
+            # skip processing the frame if no annotations (match original repo code)
+            if len(labels) == 0:
+                continue
             
             # compute motion mask
             t_mask_start = time.time()
@@ -587,10 +607,6 @@ def run_inference_directory(video_dir,
                 video_timings["inf"].append(t_inf)
                 video_timings["nms"].append(t_nms)
                 video_timings["total"].append(t_pipeline_end - t_pipeline_start)
-
-            # load original labels
-            label_path = label_dir / f"{video_name}_{target_frame_idx:04d}.txt"
-            labels, true_class_indices = load_labels(label_path, h0, w0, device)
 
             # evaluate predictions
             frame_stats = evaluate_frame(pred,
