@@ -46,6 +46,12 @@ from utils.general import check_img_size, non_max_suppression, xywhn2xyxy, scale
 from utils.torch_utils import select_device
 from models.experimental import attempt_load
 
+from concurrent.futures import ThreadPoolExecutor
+
+# initialise global thread pool with two workers for the two motion compensations required for
+# each frame in the motion mask generation process
+mask_executor = ThreadPoolExecutor(max_workers = 2)
+
 def compute_mask_in_memory(lastFrame1, lastFrame2, currentFrame):
     """
     This function computes a motion mask for a particular frame, lastFrame2, given one preceding frame,
@@ -60,20 +66,25 @@ def compute_mask_in_memory(lastFrame1, lastFrame2, currentFrame):
 
     This function differs to its data preparation counterpart because it holds the 
     mask in memory rather than saving it to disk. This is necessary for inference.
-    """
-    # Compute motion compensation and differences
-    img_compensate1, mask1, avg_dist1, motion_x1, motion_y1, homo_matrix = motion_compensate(lastFrame1, lastFrame2)
-    frameDiff1 = cv2.absdiff(lastFrame2, img_compensate1)
 
-    img_compensate2, mask2, avg_dist2, motion_x2, motion_y2, homo_matrix2 = motion_compensate(currentFrame, lastFrame2)
+    The function also uses multithreading to process the motion compensations concurrently
+    """
+    # submit compensations to run in parallel
+    future1 = mask_executor.submit(motion_compensate, lastFrame1, lastFrame2)
+    future2 = mask_executor.submit(motion_compensate, currentFrame, lastFrame2)
+
+    # compute motion compensation and differences
+    img_compensate1, _, _, _, _, _ = future1.result()
+    img_compensate2, _, _, _, _, _ = future2.result()
+    frameDiff1 = cv2.absdiff(lastFrame2, img_compensate1)    
     frameDiff2 = cv2.absdiff(lastFrame2, img_compensate2)
 
-    # Average the differences to create the continuous motion mask
+    # average the differences to create the continuous motion mask
     frameDiff = cv2.addWeighted(frameDiff1, 0.5, frameDiff2, 0.5, 0) 
     
-    # Inflate 2D motion mask to 3D
-    frameDiff_3c = cv2.cvtColor(frameDiff, cv2.COLOR_GRAY2BGR)
-    return frameDiff_3c
+    # inflate 2D motion mask to 3D tensor
+    frameDiff_3d = cv2.cvtColor(frameDiff, cv2.COLOR_GRAY2BGR)
+    return frameDiff_3d
 
 def load_model_and_device(weights, device_id, imgsz):
     """
