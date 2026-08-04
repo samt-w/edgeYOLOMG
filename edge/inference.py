@@ -36,6 +36,8 @@ from collections import deque
 import time
 import csv
 from datetime import datetime
+from queue import Queue
+from threading import Thread
 
 from data_prep_scripts.MOD_Functions import motion_compensate
 from utils.augmentations import letterbox
@@ -59,12 +61,6 @@ def compute_mask_in_memory(lastFrame1, lastFrame2, currentFrame):
     This function differs to its data preparation counterpart because it holds the 
     mask in memory rather than saving it to disk. This is necessary for inference.
     """
-    # Blur images to eliminate some low-level noise 
-    # Convert to grayscale to reduce computational complexity
-    lastFrame1 = cv2.cvtColor(cv2.GaussianBlur(lastFrame1, (11, 11), 0), cv2.COLOR_BGR2GRAY)
-    lastFrame2 = cv2.cvtColor(cv2.GaussianBlur(lastFrame2, (11, 11), 0), cv2.COLOR_BGR2GRAY)
-    currentFrame = cv2.cvtColor(cv2.GaussianBlur(currentFrame, (11, 11), 0), cv2.COLOR_BGR2GRAY)
-
     # Compute motion compensation and differences
     img_compensate1, mask1, avg_dist1, motion_x1, motion_y1, homo_matrix = motion_compensate(lastFrame1, lastFrame2)
     frameDiff1 = cv2.absdiff(lastFrame2, img_compensate1)
@@ -453,6 +449,45 @@ def calculate_metrics(timings,
         
     print(f"Results appended to {csv_file.resolve()}")
 
+# initialise threaded reader class to queue frames for GPU
+class VideoReader:
+    def __init__(self, video_filepath, queue_size = 30):
+        self.videocap = cv2.VideoCapture(str(video_filepath))
+        # initialise a queue capped at the maximum size
+        self.framequeue = Queue(maxsize = queue_size)
+        # flag to stop the thread at the end of the video
+        self.stopped = False
+        # initialise a thread running the update() function continuously
+        Thread(target = self.update, daemon = True).start()
+
+    def update(self):
+        while not self.stopped:
+            # read the next frame from the video
+            ret, frame = self.videocap.read()
+            if not ret:
+                # terminate the looping thread
+                self.stopped = True
+                return
+            # add the frame to the back of the queue
+            self.framequeue.put(frame)
+                
+    def read(self):
+        # if video is finished and queue is empty, return False
+        if self.stopped and self.framequeue.empty():
+            return False, None
+        
+        # else, return True and remove the oldest frame (i.e. at the front of the queue)
+        return True, self.framequeue.get()
+
+    def isOpened(self):
+        # necessary check for the OpenCV object
+        return self.videocap.isOpened()
+        
+    def release(self):
+        # match the OpenCV logic by stopping the thread and releasing the file
+        self.stopped = True
+        self.videocap.release()
+
 def run_inference_directory(video_dir,
                             label_dir,
                             weights,
@@ -523,7 +558,7 @@ def run_inference_directory(video_dir,
         video_name = video_path.stem
     
         # initialise video and buffer
-        cap = cv2.VideoCapture(str(video_path))
+        cap = VideoReader(video_path)
         frame_buffer = deque(maxlen = 5)
         
         frame_count = 0
@@ -556,13 +591,15 @@ def run_inference_directory(video_dir,
                 break
                 
             frame_count += 1
-            frame_buffer.append(frame)
+            # greyscale and blur frame for feeding to motion mask function
+            grey_blur_frame = cv2.cvtColor(cv2.GaussianBlur(frame, (11, 11), 0), cv2.COLOR_BGR2GRAY)
+            frame_buffer.append((frame, grey_blur_frame))
 
             # skip inference until 5-frame buffer populated
             if len(frame_buffer) < 5:
                 continue
 
-            target_frame = frame_buffer[2]
+            target_frame = frame_buffer[2][0]
             target_frame_idx = frame_count - 2
 
             # extract original image height and width to scale labels
@@ -576,7 +613,7 @@ def run_inference_directory(video_dir,
             
             # compute motion mask
             t_mask_start = time.time()
-            mask = compute_mask_in_memory(frame_buffer[0], frame_buffer[2], frame_buffer[4])
+            mask = compute_mask_in_memory(frame_buffer[0][1], frame_buffer[2][1], frame_buffer[4][1])
             t_mask_end = time.time()
             # preprocess target images
             if device.type != "cpu":
