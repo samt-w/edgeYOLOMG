@@ -502,6 +502,90 @@ class VideoReader:
         self.stopped = True
         self.videocap.release()
 
+def data_prep_worker(video_name,
+                     cap,
+                     label_dir,
+                     imgsz, stride,
+                     device,
+                     half,
+                     inference_queue):
+    """
+    Background worker thread that handles CPU-bound data preprocessing
+
+    Args:
+        video_name: name of current video (used to locate labels)
+        cap: OpenCV object of the current video
+        label_dir: directory path containing YOLO .txt labels
+        imgsz: target image size
+        stride: model's maximum stride, used for letterbox padding
+        device: execution device (CPU or GPU)
+        half: flag controlling FP16 half-precision
+        inference_queue: Queue object where processed data is placed for the GPU
+
+    Sends dictionary of tensors and labels to the inference queue
+    """
+    frame_buffer = deque(maxlen = 5)
+    frame_count = 0
+
+    while cap.isOpened():
+        t_read_start = time.time()
+        ret, frame = cap.read()
+        t_read_end = time.time()
+        
+        if not ret or frame is None:
+            break
+            
+        frame_count += 1
+        # greyscale and blur frame for feeding to motion mask function
+        grey_blur_frame = cv2.cvtColor(cv2.GaussianBlur(frame, (11, 11), 0), cv2.COLOR_BGR2GRAY)
+        frame_buffer.append((frame, grey_blur_frame))
+
+        # skip inference until 5-frame buffer populated
+        if len(frame_buffer) < 5:
+            continue
+
+        target_frame = frame_buffer[2][0]
+        target_frame_idx = frame_count - 2
+
+        # extract original image height and width to scale labels
+        h0_orig, w0_orig = target_frame.shape[:2]
+        label_path = label_dir / f"{video_name}_{target_frame_idx:04d}.txt"
+        labels, true_class_indices = load_labels(label_path, h0_orig, w0_orig, device)
+        
+        # skip processing the frame if no annotations (match original repo code)
+        if len(labels) == 0:
+            continue
+        
+        # compute motion mask
+        t_mask_start = time.time()
+        mask = compute_mask_in_memory(frame_buffer[0][1], frame_buffer[2][1], frame_buffer[4][1])
+        t_mask_end = time.time()
+        
+        # preprocess target images (moves them to the target device)
+        t_prep_start = time.time()
+        img1, (h0, w0) = preprocess_image(target_frame, imgsz, stride, device, half, pad_colour=(114, 114, 114))
+        img2, _ = preprocess_image(mask, imgsz, stride, device, half, pad_colour=(0, 0, 0))
+        t_prep_end = time.time()
+        
+        # package into dictionary
+        payload = {
+            "img1": img1,
+            "img2": img2,
+            "labels": labels,
+            "true_class_indices": true_class_indices,
+            "h0": h0,
+            "w0": w0,
+            "t_read": t_read_end - t_read_start,
+            "t_mask": t_mask_end - t_mask_start,
+            "t_prep": t_prep_end - t_prep_start
+        }
+        
+        # push to queue (blocks by default if queue hits maxsize)
+        inference_queue.put(payload)
+        
+    # add None to queue at end of video to tell GPU the video is finished
+    inference_queue.put(None)
+
 def run_inference_directory(video_dir,
                             label_dir,
                             weights,
@@ -511,7 +595,7 @@ def run_inference_directory(video_dir,
                             iou_thres = 0.4,
                             warmup_frames = 30):
     """
-    Collates the inference pipeline:
+    Collates the inference pipeline using multithreading:
     - video loading
     - frame buffering
     - pipeline timing
@@ -571,11 +655,23 @@ def run_inference_directory(video_dir,
     for video_path in video_files:
         video_name = video_path.stem
     
-        # initialise video and buffer
+        # initialise video and inference queue
         cap = VideoReader(video_path)
-        frame_buffer = deque(maxlen = 5)
-        
-        frame_count = 0
+        inference_queue = Queue(maxsize = 15)
+
+        # initialise background thread for data preprocessing
+        prep_thread = Thread(target = data_prep_worker,
+                             args = (video_name,
+                                     cap,
+                                     label_dir,
+                                     imgsz,
+                                     stride,
+                                     device,
+                                     half,
+                                     inference_queue),
+                             daemon = True)
+        prep_thread.start()
+
         video_inference_count = 0
         video_stats = []
 
@@ -591,93 +687,53 @@ def run_inference_directory(video_dir,
         
         print(f"Starting inference evaluation for {video_name}...")
         
-        while cap.isOpened():
-            # initialise timing objects
-            if device.type != 'cpu': 
-                pipe_start_evt = torch.cuda.Event(enable_timing = True)
-                pipe_end_evt = torch.cuda.Event(enable_timing = True)
-                prep_start_evt = torch.cuda.Event(enable_timing = True)
-                prep_end_evt = torch.cuda.Event(enable_timing = True)
-                pipe_start_evt.record()
-            else:
-                t_pipeline_start = time.time()
+        # record start time of first frame
+        last_frame_end_time = time.time() 
+        
+        while True:
+            # pull next frame's pre-packaged data from the queue
+            payload = inference_queue.get()
             
-            # read frame (CPU-bound, so not using cuda.Event)
-            t_read_start = time.time()
-            ret, frame = cap.read()
-            t_read_end = time.time()
-            if not ret or frame is None:
+            # if next item is 'None', video is finished
+            if payload is None:
                 break
                 
-            frame_count += 1
-            # greyscale and blur frame for feeding to motion mask function
-            grey_blur_frame = cv2.cvtColor(cv2.GaussianBlur(frame, (11, 11), 0), cv2.COLOR_BGR2GRAY)
-            frame_buffer.append((frame, grey_blur_frame))
-
-            # skip inference until 5-frame buffer populated
-            if len(frame_buffer) < 5:
-                continue
-
-            target_frame = frame_buffer[2][0]
-            target_frame_idx = frame_count - 2
-
-            # extract original image height and width to scale labels
-            h0_orig, w0_orig = target_frame.shape[:2]
-            label_path = label_dir / f"{video_name}_{target_frame_idx:04d}.txt"
-            labels, true_class_indices = load_labels(label_path, h0_orig, w0_orig, device)
-            
-            # skip processing the frame if no annotations (match original repo code)
-            if len(labels) == 0:
-                continue
-            
-            # compute motion mask
-            t_mask_start = time.time()
-            mask = compute_mask_in_memory(frame_buffer[0][1], frame_buffer[2][1], frame_buffer[4][1])
-            t_mask_end = time.time()
-            # preprocess target images
-            if device.type != "cpu":
-                prep_start_evt.record()
-            else:
-                t_prep_start = time.time()
-
-            img1, (h0, w0) = preprocess_image(target_frame, imgsz, stride, device, half, pad_colour=(114, 114, 114)) # grey padding for RGB
-            img2, _ = preprocess_image(mask, imgsz, stride, device, half, pad_colour=(0, 0, 0)) # black padding for masks
-
-            if device.type != "cpu":
-                prep_end_evt.record()
-            else:
-                t_prep_end = time.time()
+            # unpack data
+            img1 = payload["img1"]
+            img2 = payload["img2"]
+            labels = payload["labels"]
+            true_class_indices = payload["true_class_indices"]
+            h0 = payload["h0"]
+            w0 = payload["w0"]
             # run inference and non-maximum suppression
             if device.type != 'cpu':
                 # execute prediction and record timings
                 pred, inf_start_evt, inf_end_evt, nms_end_evt = execute_prediction(model, img1, img2, device, conf_thres, iou_thres)
                 
-                # mark end of pipeline
-                pipe_end_evt.record()
-                
                 # synchronise the pipeline timings
-                pipe_end_evt.synchronize() 
+                nms_end_evt.synchronize() 
                 
-                # compute time taken in seconds for FPS calculations
-                t_prep = prep_start_evt.elapsed_time(prep_end_evt) / 1000.0
+                # compute GPU kernel times
                 t_inf = inf_start_evt.elapsed_time(inf_end_evt) / 1000.0
                 t_nms = inf_end_evt.elapsed_time(nms_end_evt) / 1000.0
-                t_total = pipe_start_evt.elapsed_time(pipe_end_evt) / 1000.0
             
             
             else:
                 pred, t_inf, t_nms = execute_prediction(model, img1, img2, device, conf_thres, iou_thres)
-                t_pipeline_end = time.time()
-                t_prep = t_prep_end - t_prep_start
-                t_total = t_pipeline_end - t_pipeline_start
+
+            # compute pipeline throughput time for this frame
+            current_time = time.time()
+            t_total = current_time - last_frame_end_time
+            last_frame_end_time = current_time
+
             video_inference_count += 1
             global_inference_count += 1
             
             # only record frame times after the warmup period, to avoid spoilt averages
             if global_inference_count > warmup_frames:
-                video_timings["read"].append(t_read_end - t_read_start)
-                video_timings["mask"].append(t_mask_end - t_mask_start)
-                video_timings["prep"].append(t_prep)
+                video_timings["read"].append(payload["t_read"])
+                video_timings["mask"].append(payload["t_mask"])
+                video_timings["prep"].append(payload["t_prep"])
                 video_timings["inf"].append(t_inf)
                 video_timings["nms"].append(t_nms)
                 video_timings["total"].append(t_total)
@@ -737,6 +793,7 @@ def run_inference_directory(video_dir,
         print(f"Uploaded {csv_path} as artifact to ClearML task {task.id}")
 
     task.close()
+
 if __name__ == "__main__":
     TEST_VIDEOS_DIR = TEST_VIDEOS_DIR
     LABEL_DIR = LABELS_TEST_DIR
