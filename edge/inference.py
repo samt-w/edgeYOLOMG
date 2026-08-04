@@ -425,7 +425,8 @@ def calculate_metrics(timings,
     print("="*40)
 
     # Save results to CSV
-    csv_file = Path(f"{run_config['run_group_id']}_inference-results.csv")
+    output_dir = run_config["output_dir"]
+    csv_file = output_dir / f"{run_config['run_group_id']}_inference-results.csv"
     file_exists = csv_file.is_file()
     
     headers = [
@@ -511,7 +512,8 @@ def process_single_frame_payload(target_frame,
                                  imgsz,
                                  stride,
                                  device,
-                                 half):
+                                 half,
+                                 max_workers):
     """
     Helper function to compute mask, preprocess images, and load labels for a single frame.
     Runs inside the multi-frame thread pool.
@@ -526,6 +528,7 @@ def process_single_frame_payload(target_frame,
         stride: model's maximum stride, used for letterbox padding
         device: execution device (CPU or GPU)
         half: flag controlling FP16 half-precision
+        max_workers: the number of permitted threads
     """
     h0_orig, w0_orig = target_frame.shape[:2]
     label_path = label_dir / f"{video_name}_{target_frame_idx:04d}.txt"
@@ -550,9 +553,9 @@ def process_single_frame_payload(target_frame,
         "true_class_indices": true_class_indices,
         "h0": h0,
         "w0": w0,
-        "t_read": 0.0001, # Minimal read overhead in worker
-        "t_mask": t_mask_end - t_mask_start,
-        "t_prep": t_prep_end - t_prep_start
+        "t_read": 0.001, # minimal read overhead in worker
+        "t_mask": (t_mask_end - t_mask_start) / max_workers, # time per finished frame
+        "t_prep": (t_prep_end - t_prep_start) / max_workers # time per finished frame
     }
 
 def data_prep_worker(video_name,
@@ -618,7 +621,8 @@ def data_prep_worker(video_name,
                                  imgsz,
                                  stride,
                                  device,
-                                 half)
+                                 half,
+                                 max_workers)
             pending_futures[target_frame_idx] = future
 
             # push completed frames to inference_queue in frame index order
@@ -822,6 +826,10 @@ def run_inference_directory(video_dir,
 
         cap.release()
 
+        # define output directory
+        output_dir = Path(__file__).resolve().parent / "inference_results"
+        output_dir.mkdir(parents = True, exist_ok = True)
+
         # create config for CSV export for this video
         run_config = {
             "run_group_id": run_group_id,
@@ -829,7 +837,8 @@ def run_inference_directory(video_dir,
             "imgsz": imgsz,
             "conf_thres": conf_thres,
             "iou_thres": iou_thres,
-            "weights": str(weights)
+            "weights": str(weights),
+            "output_dir": output_dir
         }
 
         # compute and display metrics
@@ -848,12 +857,13 @@ def run_inference_directory(video_dir,
         summary_config["video_name"] = "OVERALL_SUMMARY"
         calculate_metrics(overall_timings, overall_stats, names_dict, overall_inference_count, summary_config)
 
-    # Upload updated inference_results.csv to ClearML as an artifact
-    csv_path = Path(f"{run_group_id}_inference-results.csv")
+    # upload updated inference_results.csv to ClearML as an artifact
+    output_dir = Path(__file__).resolve().parent / "inference_results"
+    csv_path = output_dir / f"{run_group_id}_inference-results.csv"
     if csv_path.exists():
         task.upload_artifact(
-            name=f"Inference_Results_{run_group_id}",
-            artifact_object=str(csv_path)
+            name = f"Inference_Results_{run_group_id}",
+            artifact_object = str(csv_path)
         )
         print(f"Uploaded {csv_path} as artifact to ClearML task {task.id}")
 
