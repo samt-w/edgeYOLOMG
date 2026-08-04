@@ -48,10 +48,6 @@ from models.experimental import attempt_load
 
 from concurrent.futures import ThreadPoolExecutor
 
-# initialise global thread pool with two workers for the two motion compensations required for
-# each frame in the motion mask generation process
-mask_executor = ThreadPoolExecutor(max_workers = 2)
-
 def compute_mask_in_memory(lastFrame1, lastFrame2, currentFrame):
     """
     This function computes a motion mask for a particular frame, lastFrame2, given one preceding frame,
@@ -66,16 +62,10 @@ def compute_mask_in_memory(lastFrame1, lastFrame2, currentFrame):
 
     This function differs to its data preparation counterpart because it holds the 
     mask in memory rather than saving it to disk. This is necessary for inference.
-
-    The function also uses multithreading to process the motion compensations concurrently
     """
-    # submit compensations to run in parallel
-    future1 = mask_executor.submit(motion_compensate, lastFrame1, lastFrame2)
-    future2 = mask_executor.submit(motion_compensate, currentFrame, lastFrame2)
-
     # compute motion compensation and differences
-    img_compensate1, _, _, _, _, _ = future1.result()
-    img_compensate2, _, _, _, _, _ = future2.result()
+    img_compensate1, _, _, _, _, _ = motion_compensate(lastFrame1, lastFrame2)
+    img_compensate2, _, _, _, _, _ = motion_compensate(currentFrame, lastFrame2)
     frameDiff1 = cv2.absdiff(lastFrame2, img_compensate1)    
     frameDiff2 = cv2.absdiff(lastFrame2, img_compensate2)
 
@@ -513,15 +503,71 @@ class VideoReader:
         self.stopped = True
         self.videocap.release()
 
+def process_single_frame_payload(target_frame,
+                                 mask_frames,
+                                 target_frame_idx,
+                                 video_name,
+                                 label_dir,
+                                 imgsz,
+                                 stride,
+                                 device,
+                                 half):
+    """
+    Helper function to compute mask, preprocess images, and load labels for a single frame.
+    Runs inside the multi-frame thread pool.
+
+    Args:
+        target_frame: raw array for current frame
+        mask_frames: tuple of three preprocessed arrays (lastFrame1, targetFrame, currentFrame) to compute motion mask
+        target_frame_idx: frame number for target_frame, used to locate correct label
+        video_name: name of current video (used to locate labels)
+        label_dir: directory path containing YOLO .txt labels
+        imgsz: target image size
+        stride: model's maximum stride, used for letterbox padding
+        device: execution device (CPU or GPU)
+        half: flag controlling FP16 half-precision
+    """
+    h0_orig, w0_orig = target_frame.shape[:2]
+    label_path = label_dir / f"{video_name}_{target_frame_idx:04d}.txt"
+    labels, true_class_indices = load_labels(label_path, h0_orig, w0_orig, device)
+    
+    if len(labels) == 0:
+        return None  # skip empty frames
+    
+    t_mask_start = time.time()
+    mask = compute_mask_in_memory(mask_frames[0], mask_frames[1], mask_frames[2])
+    t_mask_end = time.time()
+    
+    t_prep_start = time.time()
+    img1, (h0, w0) = preprocess_image(target_frame, imgsz, stride, device, half, pad_colour=(114, 114, 114))
+    img2, _ = preprocess_image(mask, imgsz, stride, device, half, pad_colour=(0, 0, 0))
+    t_prep_end = time.time()
+    
+    return {
+        "img1": img1,
+        "img2": img2,
+        "labels": labels,
+        "true_class_indices": true_class_indices,
+        "h0": h0,
+        "w0": w0,
+        "t_read": 0.0001, # Minimal read overhead in worker
+        "t_mask": t_mask_end - t_mask_start,
+        "t_prep": t_prep_end - t_prep_start
+    }
+
 def data_prep_worker(video_name,
                      cap,
                      label_dir,
-                     imgsz, stride,
+                     imgsz,
+                     stride,
                      device,
                      half,
-                     inference_queue):
+                     inference_queue,
+                     max_workers = 3):
     """
-    Background worker thread that handles CPU-bound data preprocessing
+    Background worker multithreads that handle CPU-bound data preprocessing
+
+    Uses frame indexes to ensure frame ordering in inference queue is correct
 
     Args:
         video_name: name of current video (used to locate labels)
@@ -537,62 +583,70 @@ def data_prep_worker(video_name,
     """
     frame_buffer = deque(maxlen = 5)
     frame_count = 0
+    next_output_idx = 0
+    pending_futures = {}
 
-    while cap.isOpened():
-        t_read_start = time.time()
-        ret, frame = cap.read()
-        t_read_end = time.time()
-        
-        if not ret or frame is None:
-            break
+    # threads process max 3 frames concurrently on the CPU
+    with ThreadPoolExecutor(max_workers = max_workers) as pool:
+        while cap.isOpened():
+            ret, frame = cap.read()
             
-        frame_count += 1
-        # greyscale and blur frame for feeding to motion mask function
-        grey_blur_frame = cv2.cvtColor(cv2.GaussianBlur(frame, (11, 11), 0), cv2.COLOR_BGR2GRAY)
-        frame_buffer.append((frame, grey_blur_frame))
+            if not ret or frame is None:
+                break
+                
+            frame_count += 1
+            # greyscale and blur frame for feeding to motion mask function
+            grey_blur_frame = cv2.cvtColor(cv2.GaussianBlur(frame, (11, 11), 0), cv2.COLOR_BGR2GRAY)
+            frame_buffer.append((frame, grey_blur_frame))
 
-        # skip inference until 5-frame buffer populated
-        if len(frame_buffer) < 5:
-            continue
+            # skip inference until 5-frame buffer populated
+            if len(frame_buffer) < 5:
+                continue
 
-        target_frame = frame_buffer[2][0]
-        target_frame_idx = frame_count - 2
+            target_frame = frame_buffer[2][0]
+            target_frame_idx = frame_count - 2
 
-        # extract original image height and width to scale labels
-        h0_orig, w0_orig = target_frame.shape[:2]
-        label_path = label_dir / f"{video_name}_{target_frame_idx:04d}.txt"
-        labels, true_class_indices = load_labels(label_path, h0_orig, w0_orig, device)
+            mask_frames = (frame_buffer[0][1], frame_buffer[2][1], frame_buffer[4][1])
+
+            # submit frames to pool
+            future = pool.submit(process_single_frame_payload,
+                                 target_frame,
+                                 mask_frames,
+                                 target_frame_idx,
+                                 video_name,
+                                 label_dir,
+                                 imgsz,
+                                 stride,
+                                 device,
+                                 half)
+            pending_futures[target_frame_idx] = future
+
+            # push completed frames to inference_queue in frame index order
+            while next_output_idx in pending_futures:
+                # wait for next frame to finish
+                fut = pending_futures[next_output_idx]
+                if not fut.done():
+                    break
+
+                payload = fut.result()
+                del pending_futures[next_output_idx]
+                next_output_idx += 1
         
-        # skip processing the frame if no annotations (match original repo code)
-        if len(labels) == 0:
-            continue
-        
-        # compute motion mask
-        t_mask_start = time.time()
-        mask = compute_mask_in_memory(frame_buffer[0][1], frame_buffer[2][1], frame_buffer[4][1])
-        t_mask_end = time.time()
-        
-        # preprocess target images (moves them to the target device)
-        t_prep_start = time.time()
-        img1, (h0, w0) = preprocess_image(target_frame, imgsz, stride, device, half, pad_colour=(114, 114, 114))
-        img2, _ = preprocess_image(mask, imgsz, stride, device, half, pad_colour=(0, 0, 0))
-        t_prep_end = time.time()
-        
-        # package into dictionary
-        payload = {
-            "img1": img1,
-            "img2": img2,
-            "labels": labels,
-            "true_class_indices": true_class_indices,
-            "h0": h0,
-            "w0": w0,
-            "t_read": t_read_end - t_read_start,
-            "t_mask": t_mask_end - t_mask_start,
-            "t_prep": t_prep_end - t_prep_start
-        }
-        
-        # push to queue (blocks by default if queue hits maxsize)
-        inference_queue.put(payload)
+                # push to queue (blocks by default if queue hits maxsize)
+                if payload is not None:
+                    inference_queue.put(payload)
+
+        # remove remaining completed futures at end of frame
+        while pending_futures:
+            if next_output_idx in pending_futures:
+                fut = pending_futures[next_output_idx]
+                payload = fut.result()
+                del pending_futures[next_output_idx]
+                next_output_idx += 1
+                if payload is not None:
+                    inference_queue.put(payload)
+            else:
+                next_output_idx += 1
         
     # add None to queue at end of video to tell GPU the video is finished
     inference_queue.put(None)
