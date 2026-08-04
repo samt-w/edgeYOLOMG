@@ -186,23 +186,37 @@ def execute_prediction(model,
     and the time taken for the forward pass and NMS
     """
     if device.type != "cpu":
-        torch.cuda.synchronize(device)
-    t0 = time.time()
-    with torch.no_grad():
-        # forward pass
-        pred = model(img1, img2, augment = False)[0]
+        # initialise timing events
+        start_inf = torch.cuda.Event(enable_timing=True)
+        end_inf = torch.cuda.Event(enable_timing=True)
+        end_nms = torch.cuda.Event(enable_timing=True)
+        # start timing inference
+        start_inf.record()
+        with torch.no_grad():
+            # forward pass
+            pred = model(img1, img2, augment = False)[0]
 
-    if device.type != "cpu":
-        torch.cuda.synchronize(device)
-    t1 = time.time()
-        
-    # apply NMS
-    pred = non_max_suppression(pred, conf_thres, iou_thres)[0]
+        # end timing inference (will also use this to start timing NMS)
+        end_inf.record()
+            
+        # apply NMS
+        pred = non_max_suppression(pred, conf_thres, iou_thres)[0]
 
-    if device.type != "cpu":
-        torch.cuda.synchronize(device)
-    t2 = time.time()
-    return pred, (t1 - t0), (t2 - t1)
+        # end timing NMS
+        end_nms.record()
+
+        # return unsynchronised timing events
+        return pred, start_inf, end_inf, end_nms
+
+    else:
+        # logic for executing and timing CPU runs
+        t0 = time.time()
+        with torch.no_grad():
+            pred = model(img1, img2, augment = False)[0]
+        t1 = time.time()
+        pred = non_max_suppression(pred, conf_thres, iou_thres)[0]
+        t2 = time.time()
+        return pred, (t1 - t0), (t2 - t1)
 
 def load_labels(label_path,
                 h0,
@@ -578,12 +592,17 @@ def run_inference_directory(video_dir,
         print(f"Starting inference evaluation for {video_name}...")
         
         while cap.isOpened():
-            # start timing
+            # initialise timing objects
             if device.type != 'cpu': 
-                torch.cuda.synchronize(device)
-            t_pipeline_start = time.time()
+                pipe_start_evt = torch.cuda.Event(enable_timing = True)
+                pipe_end_evt = torch.cuda.Event(enable_timing = True)
+                prep_start_evt = torch.cuda.Event(enable_timing = True)
+                prep_end_evt = torch.cuda.Event(enable_timing = True)
+                pipe_start_evt.record()
+            else:
+                t_pipeline_start = time.time()
             
-            # read frame
+            # read frame (CPU-bound, so not using cuda.Event)
             t_read_start = time.time()
             ret, frame = cap.read()
             t_read_end = time.time()
@@ -617,22 +636,40 @@ def run_inference_directory(video_dir,
             t_mask_end = time.time()
             # preprocess target images
             if device.type != "cpu":
-                torch.cuda.synchronize(device)
-            t_prep_start = time.time()
+                prep_start_evt.record()
+            else:
+                t_prep_start = time.time()
 
             img1, (h0, w0) = preprocess_image(target_frame, imgsz, stride, device, half, pad_colour=(114, 114, 114)) # grey padding for RGB
             img2, _ = preprocess_image(mask, imgsz, stride, device, half, pad_colour=(0, 0, 0)) # black padding for masks
 
             if device.type != "cpu":
-                torch.cuda.synchronize(device)
-            t_prep_end = time.time()
+                prep_end_evt.record()
+            else:
+                t_prep_end = time.time()
             # run inference and non-maximum suppression
-            pred, t_inf, t_nms = execute_prediction(model, img1, img2, device, conf_thres, iou_thres)
-            # end timing
-            if device.type != 'cpu': 
-                torch.cuda.synchronize(device)
-            t_pipeline_end = time.time()
+            if device.type != 'cpu':
+                # execute prediction and record timings
+                pred, inf_start_evt, inf_end_evt, nms_end_evt = execute_prediction(model, img1, img2, device, conf_thres, iou_thres)
+                
+                # mark end of pipeline
+                pipe_end_evt.record()
+                
+                # synchronise the pipeline timings
+                pipe_end_evt.synchronize() 
+                
+                # compute time taken in seconds for FPS calculations
+                t_prep = prep_start_evt.elapsed_time(prep_end_evt) / 1000.0
+                t_inf = inf_start_evt.elapsed_time(inf_end_evt) / 1000.0
+                t_nms = inf_end_evt.elapsed_time(nms_end_evt) / 1000.0
+                t_total = pipe_start_evt.elapsed_time(pipe_end_evt) / 1000.0
             
+            
+            else:
+                pred, t_inf, t_nms = execute_prediction(model, img1, img2, device, conf_thres, iou_thres)
+                t_pipeline_end = time.time()
+                t_prep = t_prep_end - t_prep_start
+                t_total = t_pipeline_end - t_pipeline_start
             video_inference_count += 1
             global_inference_count += 1
             
@@ -640,10 +677,10 @@ def run_inference_directory(video_dir,
             if global_inference_count > warmup_frames:
                 video_timings["read"].append(t_read_end - t_read_start)
                 video_timings["mask"].append(t_mask_end - t_mask_start)
-                video_timings["prep"].append(t_prep_end - t_prep_start)
+                video_timings["prep"].append(t_prep)
                 video_timings["inf"].append(t_inf)
                 video_timings["nms"].append(t_nms)
-                video_timings["total"].append(t_pipeline_end - t_pipeline_start)
+                video_timings["total"].append(t_total)
 
             # evaluate predictions
             frame_stats = evaluate_frame(pred,
