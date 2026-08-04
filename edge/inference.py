@@ -156,7 +156,7 @@ def preprocess_image(image,
     img = np.ascontiguousarray(img)  # optimise memory layout for pytorch
     
     # convert to tensor and transfer to target device
-    img = torch.from_numpy(img).to(device)
+    img = torch.from_numpy(img).to(device, non_blocking = True)
     img = img.half() if half else img.float()  # convert uint8 to fp16/32
     img /= 255.0  # normalise pixel values from [0, 255] to [0, 1]
     
