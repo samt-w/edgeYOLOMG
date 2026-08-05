@@ -830,6 +830,14 @@ def run_inference_directory(video_dir,
         output_dir = Path(__file__).resolve().parent / "inference_results"
         output_dir.mkdir(parents = True, exist_ok = True)
 
+        # sanitise the weights path for git tracking/Github uploading
+        try:
+            # make the weights path relative to project root directory
+            sanitised_weights = Path(weights).resolve().relative_to(ROOT)
+        except ValueError:
+            # in case weights are stored outside project root (but will just store the final filename)
+            sanitised_weights = Path(weights).name
+
         # create config for CSV export for this video
         run_config = {
             "run_group_id": run_group_id,
@@ -837,7 +845,7 @@ def run_inference_directory(video_dir,
             "imgsz": imgsz,
             "conf_thres": conf_thres,
             "iou_thres": iou_thres,
-            "weights": str(weights),
+            "weights": str(sanitised_weights),
             "output_dir": output_dir
         }
 
@@ -878,7 +886,7 @@ if __name__ == "__main__":
 
     TEST_VIDEOS_DIR_MINIMUM = TEST_VIDEOS_DIR_MINIMUM
 
-    run_inference_directory(video_dir = TEST_VIDEOS_DIR,
+    run_inference_directory(video_dir = TEST_VIDEOS_DIR_MINIMUM,
                             label_dir = LABEL_DIR,
                             weights = WEIGHTS,
                             imgsz = 640,
