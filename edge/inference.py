@@ -880,16 +880,16 @@ def run_inference_directory(video_dir,
 if __name__ == "__main__":
     TEST_VIDEOS_DIR = TEST_VIDEOS_DIR
     LABEL_DIR = LABELS_TEST_DIR
-    WEIGHTS = PROJECT_ROOT / "runs/train/ARD100_mask32-640_uavs/weights/best.pt"
+    WEIGHTS_640 = PROJECT_ROOT / "runs/train/ARD100_mask32-640_uavs/weights/best.pt"
+    WEIGHTS_1280 = PROJECT_ROOT / "runs/train/ARD100_mask32-1280_uavs/weights/best.pt"
 
     # FOR TESTING THIS INFERENCE PIPELINE WITH JUST A SINGLE VIDEO
-
     TEST_VIDEOS_DIR_MINIMUM = TEST_VIDEOS_DIR_MINIMUM
 
     run_inference_directory(video_dir = TEST_VIDEOS_DIR_MINIMUM,
                             label_dir = LABEL_DIR,
-                            weights = WEIGHTS,
-                            imgsz = 640,
+                            weights = WEIGHTS_1280,
+                            imgsz = 1280,
                             device_id = "0",
                             conf_thres = 0.001,
                             iou_thres = 0.4,
