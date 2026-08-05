@@ -37,7 +37,7 @@ import time
 import csv
 from datetime import datetime
 from queue import Queue
-from threading import Thread
+from threading import Thread, Semaphore
 
 from data_prep_scripts.MOD_Functions import motion_compensate
 from utils.augmentations import letterbox
@@ -155,9 +155,9 @@ def preprocess_image(image,
     # convert to CPU tensor
     img = torch.from_numpy(img)
     
-    # add batch dimension to fit pytorch batch logic and pin memory for fast GPU transfer
+    # add batch dimension to fit pytorch batch logic
     # adds a dummy dimension at index 0 to create a 4D tensor of 1 image in the batch (1, C, H, W)
-    img = img.unsqueeze(0).pin_memory()
+    img = img.unsqueeze(0)
     
     return img, (h0, w0)
 
@@ -252,8 +252,8 @@ def load_labels(label_path,
                 # only include frames with positive class labels
                 if len(labels):
                     true_class_indices = labels[:, 0].tolist()
-                    # create labels tensor and pin memory for fast GPU transfer 
-                    labels_pt_tensor = torch.from_numpy(labels).pin_memory()
+                    # create labels tensor
+                    labels_pt_tensor = torch.from_numpy(labels)
                 
     return (labels_pt_tensor, true_class_indices)
 
@@ -579,8 +579,17 @@ def data_prep_worker(video_name,
     """
     frame_buffer = deque(maxlen = 5)
     frame_count = 0
-    next_output_idx = 0
+    # starting indexing at 3 to match the target frame index
+    next_output_idx = 3
     pending_futures = {}
+
+    # initialise semaphore to limit number of tasks that can be
+    # submitted, relative to number of workers
+    task_semaphore = Semaphore(max_workers * 3)
+
+    # define semaphore release function to be called when the task has been completed
+    def release_semaphore(fut):
+        task_semaphore.release()
 
     # threads process max 3 frames concurrently on the CPU
     with ThreadPoolExecutor(max_workers = max_workers) as pool:
@@ -606,6 +615,9 @@ def data_prep_worker(video_name,
 
             mask_frames = (frame_buffer[0][1], frame_buffer[2][1], frame_buffer[4][1])
 
+            # block the task submission if the maximum tasks have been reached
+            task_semaphore.acquire()
+
             # submit frames to pool
             future = pool.submit(process_single_frame_payload,
                                  target_frame,
@@ -617,15 +629,20 @@ def data_prep_worker(video_name,
                                  stride,
                                  target_t_read,
                                  max_workers)
+
+            # attach callback to execute semaphore release when task is completed
+            future.add_done_callback(release_semaphore)
+
             pending_futures[target_frame_idx] = future
 
             # push completed frames to inference_queue in frame index order
             while next_output_idx in pending_futures:
-                # wait for next frame to finish
+                # checking whether need to wait for next frame to finish
                 fut = pending_futures[next_output_idx]
                 if not fut.done():
                     break
 
+                # if the break is not triggered, thread is forced to wait until frame completes
                 payload = fut.result()
                 del pending_futures[next_output_idx]
                 next_output_idx += 1
@@ -720,7 +737,7 @@ def run_inference_directory(video_dir,
     
         # initialise video and inference queue
         cap = VideoReader(video_path)
-        inference_queue = Queue(maxsize = 30)
+        inference_queue = Queue(maxsize = 8)
 
         # initialise background thread for data preprocessing
         prep_thread = Thread(target = data_prep_worker,
@@ -828,7 +845,13 @@ def run_inference_directory(video_dir,
                 current_fps = 1.0 / np.mean(video_timings["total"]) if video_timings["total"] else 0.0
                 print(f"Processed {video_inference_count} frames for {video_name}... Current Pipeline FPS: {current_fps:.2f}")
 
+            # delete payload to reduce likelihood of OOM errors
+            del payload, img1_cpu, img2_cpu, img1, img2, pred, labels
+
         cap.release()
+
+        # flush pytorch allocator cache at the end of each video to reduce memory fragmentation
+        torch.cuda.empty_cache()
 
         # define output directory
         output_dir = Path(__file__).resolve().parent / "inference_results"
@@ -890,10 +913,10 @@ if __name__ == "__main__":
     # FOR TESTING THIS INFERENCE PIPELINE WITH JUST A SINGLE VIDEO
     TEST_VIDEOS_DIR_MINIMUM = TEST_VIDEOS_DIR_MINIMUM
 
-    run_inference_directory(video_dir = TEST_VIDEOS_DIR_MINIMUM,
+    run_inference_directory(video_dir = TEST_VIDEOS_DIR,
                             label_dir = LABEL_DIR,
-                            weights = WEIGHTS_640,
-                            imgsz = 640,
+                            weights = WEIGHTS_1280,
+                            imgsz = 1280,
                             device_id = "0",
                             conf_thres = 0.001,
                             iou_thres = 0.4,
