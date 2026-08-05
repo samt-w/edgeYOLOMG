@@ -126,21 +126,17 @@ def warmup_model(model,
 def preprocess_image(image, 
                      imgsz,
                      stride,
-                     device,
-                     half,
                      pad_colour):
     """
-    Resizes, pads, and normalises the numpy image array into the pytorch tensor
+    Resizes, pads, and normalises the numpy image array into a CPU tensor
     
     Args:
         image: the raw BGR image array 
         imgsz: target image inference size
         stride: model's maximum stride (for padding calculation)
-        device: execution device
-        half: sets whether to convert the tensor to FP16
         pad_colour: a three-integer tuple setting the colour of the letterbox padding (should be black if no motion)
         
-    Returns a tuple (tensor_image, (h0, w0)) where tensor_image is the processed pytorch tensor 
+    Returns a tuple (tensor_image, (h0, w0)) where tensor_image is the processed tensor 
     and (h0, w0) is the original image height and width
     """
     h0, w0 = image.shape[:2]
@@ -156,13 +152,12 @@ def preprocess_image(image,
     img = img[:, :, ::-1].transpose(2, 0, 1)
     img = np.ascontiguousarray(img)  # optimise memory layout for pytorch
     
-    # convert to tensor and transfer to target device
-    img = torch.from_numpy(img).to(device, non_blocking = True)
-    img = img.half() if half else img.float()  # convert uint8 to fp16/32
-    img /= 255.0  # normalise pixel values from [0, 255] to [0, 1]
+    # convert to CPU tensor
+    img = torch.from_numpy(img)
     
-    # add batch dimension (1, C, H, W)
-    img = img.unsqueeze(0)
+    # add batch dimension to fit pytorch batch logic and pin memory for fast GPU transfer
+    # adds a dummy dimension at index 0 to create a 4D tensor of 1 image in the batch (1, C, H, W)
+    img = img.unsqueeze(0).pin_memory()
     
     return img, (h0, w0)
 
@@ -221,8 +216,7 @@ def execute_prediction(model,
 
 def load_labels(label_path,
                 h0,
-                w0, 
-                device,
+                w0,
                 min_area = 25):
     """
     Read YOLO-format ground truth labels from a .txt file and convert to absolute coordinates
@@ -231,7 +225,6 @@ def load_labels(label_path,
         label_path: path to the .txt file
         h0: original image height
         w0: original image width
-        device: device to place the label tensor on
         min_area: minimum area (in pixels) for a bounding box to be valid (original repo set 25px)
         
     Returns a tuple (labels, true_class_indices) where labels (num_labels, 5) contains
@@ -239,7 +232,7 @@ def load_labels(label_path,
     """
     true_class_indices = []
     # initialise the empty labels array
-    labels_pt_tensor = torch.zeros((0, 5), device = device)
+    labels_pt_tensor = torch.zeros((0, 5))
     
     if label_path.exists():
         with open(label_path, "r") as f:
@@ -259,7 +252,8 @@ def load_labels(label_path,
                 # only include frames with positive class labels
                 if len(labels):
                     true_class_indices = labels[:, 0].tolist()
-                    labels_pt_tensor = torch.from_numpy(labels).to(device)
+                    # create labels tensor and pin memory for fast GPU transfer 
+                    labels_pt_tensor = torch.from_numpy(labels).pin_memory()
                 
     return (labels_pt_tensor, true_class_indices)
 
@@ -478,22 +472,28 @@ class VideoReader:
 
     def update(self):
         while not self.stopped:
-            # read the next frame from the video
+            # read the next frame from the video, and time the operation
+            t_start = time.time()
             ret, frame = self.videocap.read()
+            t_end = time.time()
+
             if not ret:
                 # terminate the looping thread
                 self.stopped = True
                 return
-            # add the frame to the back of the queue
-            self.framequeue.put(frame)
+
+            # add the frame and the read time to the back of the queue
+            t_read = t_end - t_start
+            self.framequeue.put((frame, t_read))
                 
     def read(self):
         # if video is finished and queue is empty, return False
         if self.stopped and self.framequeue.empty():
-            return False, None
+            return False, None, 0.0
         
-        # else, return True and remove the oldest frame (i.e. at the front of the queue)
-        return True, self.framequeue.get()
+        # else, return True, unpack the frame and read time, and remove the oldest frame (i.e. at the front of the queue)
+        frame, t_read = self.framequeue.get()
+        return True, frame, t_read
 
     def isOpened(self):
         # necessary check for the OpenCV object
@@ -511,8 +511,7 @@ def process_single_frame_payload(target_frame,
                                  label_dir,
                                  imgsz,
                                  stride,
-                                 device,
-                                 half,
+                                 target_t_read,
                                  max_workers):
     """
     Helper function to compute mask, preprocess images, and load labels for a single frame.
@@ -526,13 +525,11 @@ def process_single_frame_payload(target_frame,
         label_dir: directory path containing YOLO .txt labels
         imgsz: target image size
         stride: model's maximum stride, used for letterbox padding
-        device: execution device (CPU or GPU)
-        half: flag controlling FP16 half-precision
         max_workers: the number of permitted threads
     """
     h0_orig, w0_orig = target_frame.shape[:2]
     label_path = label_dir / f"{video_name}_{target_frame_idx:04d}.txt"
-    labels, true_class_indices = load_labels(label_path, h0_orig, w0_orig, device)
+    labels, true_class_indices = load_labels(label_path, h0_orig, w0_orig)
     
     if len(labels) == 0:
         return None  # skip empty frames
@@ -542,8 +539,8 @@ def process_single_frame_payload(target_frame,
     t_mask_end = time.time()
     
     t_prep_start = time.time()
-    img1, (h0, w0) = preprocess_image(target_frame, imgsz, stride, device, half, pad_colour=(114, 114, 114))
-    img2, _ = preprocess_image(mask, imgsz, stride, device, half, pad_colour=(0, 0, 0))
+    img1, (h0, w0) = preprocess_image(target_frame, imgsz, stride, pad_colour=(114, 114, 114))
+    img2, _ = preprocess_image(mask, imgsz, stride, pad_colour=(0, 0, 0))
     t_prep_end = time.time()
     
     return {
@@ -553,7 +550,7 @@ def process_single_frame_payload(target_frame,
         "true_class_indices": true_class_indices,
         "h0": h0,
         "w0": w0,
-        "t_read": 0.001, # minimal read overhead in worker
+        "t_read": target_t_read,
         "t_mask": (t_mask_end - t_mask_start) / max_workers, # time per finished frame
         "t_prep": (t_prep_end - t_prep_start) / max_workers # time per finished frame
     }
@@ -563,8 +560,6 @@ def data_prep_worker(video_name,
                      label_dir,
                      imgsz,
                      stride,
-                     device,
-                     half,
                      inference_queue,
                      max_workers = 3):
     """
@@ -578,8 +573,6 @@ def data_prep_worker(video_name,
         label_dir: directory path containing YOLO .txt labels
         imgsz: target image size
         stride: model's maximum stride, used for letterbox padding
-        device: execution device (CPU or GPU)
-        half: flag controlling FP16 half-precision
         inference_queue: Queue object where processed data is placed for the GPU
 
     Sends dictionary of tensors and labels to the inference queue
@@ -592,7 +585,7 @@ def data_prep_worker(video_name,
     # threads process max 3 frames concurrently on the CPU
     with ThreadPoolExecutor(max_workers = max_workers) as pool:
         while cap.isOpened():
-            ret, frame = cap.read()
+            ret, frame, t_read = cap.read()
             
             if not ret or frame is None:
                 break
@@ -600,13 +593,15 @@ def data_prep_worker(video_name,
             frame_count += 1
             # greyscale and blur frame for feeding to motion mask function
             grey_blur_frame = cv2.cvtColor(cv2.GaussianBlur(frame, (11, 11), 0), cv2.COLOR_BGR2GRAY)
-            frame_buffer.append((frame, grey_blur_frame))
+            # add frame, processed frame, and read time to buffer
+            frame_buffer.append((frame, grey_blur_frame, t_read))
 
             # skip inference until 5-frame buffer populated
             if len(frame_buffer) < 5:
                 continue
 
             target_frame = frame_buffer[2][0]
+            target_t_read = frame_buffer[2][2]
             target_frame_idx = frame_count - 2
 
             mask_frames = (frame_buffer[0][1], frame_buffer[2][1], frame_buffer[4][1])
@@ -620,8 +615,7 @@ def data_prep_worker(video_name,
                                  label_dir,
                                  imgsz,
                                  stride,
-                                 device,
-                                 half,
+                                 target_t_read,
                                  max_workers)
             pending_futures[target_frame_idx] = future
 
@@ -726,7 +720,7 @@ def run_inference_directory(video_dir,
     
         # initialise video and inference queue
         cap = VideoReader(video_path)
-        inference_queue = Queue(maxsize = 15)
+        inference_queue = Queue(maxsize = 30)
 
         # initialise background thread for data preprocessing
         prep_thread = Thread(target = data_prep_worker,
@@ -735,8 +729,6 @@ def run_inference_directory(video_dir,
                                      label_dir,
                                      imgsz,
                                      stride,
-                                     device,
-                                     half,
                                      inference_queue),
                              daemon = True)
         prep_thread.start()
@@ -768,14 +760,26 @@ def run_inference_directory(video_dir,
                 break
                 
             # unpack data
-            img1 = payload["img1"]
-            img2 = payload["img2"]
+            img1_cpu = payload["img1"]
+            img2_cpu = payload["img2"]
             labels = payload["labels"]
             true_class_indices = payload["true_class_indices"]
             h0 = payload["h0"]
             w0 = payload["w0"]
             # run inference and non-maximum suppression
             if device.type != 'cpu':
+                # transfer CPU tensor to GPU
+                img1 = img1_cpu.to(device, non_blocking = True)
+                img1 = img1.half() if half else img1.float()
+                img1 /= 255.0
+                
+                img2 = img2_cpu.to(device, non_blocking = True)
+                img2 = img2.half() if half else img2.float()
+                img2 /= 255.0
+
+                # transfer labels to GPU
+                labels = labels.to(device, non_blocking = True)
+
                 # execute prediction and record timings
                 pred, inf_start_evt, inf_end_evt, nms_end_evt = execute_prediction(model, img1, img2, device, conf_thres, iou_thres)
                 
@@ -888,8 +892,8 @@ if __name__ == "__main__":
 
     run_inference_directory(video_dir = TEST_VIDEOS_DIR_MINIMUM,
                             label_dir = LABEL_DIR,
-                            weights = WEIGHTS_1280,
-                            imgsz = 1280,
+                            weights = WEIGHTS_640,
+                            imgsz = 640,
                             device_id = "0",
                             conf_thres = 0.001,
                             iou_thres = 0.4,
