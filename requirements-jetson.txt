@@ -1,0 +1,27 @@
+# Base ----------------------------------------
+matplotlib>=3.4.3
+numpy>=1.18.5,<2.0.0
+pandas==1.5.3
+# opencv-python>=4.4.0.46,<4.11.0 # REMOVED: Handled by Jetson container
+Pillow>=7.1.2
+python-dotenv>=1.0.1
+PyYAML>=5.3.1
+requests>=2.23.0
+scipy>=1.4.1
+# torch>=1.9.1 # REMOVED: Handled by Jetson container
+# torchvision>=0.10.1 # REMOVED: Handled by Jetson container
+tqdm>=4.65.2
+thop>=0.1.1
+# onnx>=1.17.0 # REMOVED: Handled by Jetson container
+
+# Cloud -------------------------------------
+runpod>=1.9.1
+
+# Logging -------------------------------------
+tensorboard==2.14.0
+protobuf<5.0.0
+torch-tb-profiler>=0.4.3
+clearml>=2.1.10
+
+# Plotting ------------------------------------
+seaborn>=0.11.2
