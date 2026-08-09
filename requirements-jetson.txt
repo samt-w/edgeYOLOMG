@@ -1,7 +1,7 @@
 # Base ----------------------------------------
 matplotlib>=3.4.3
 numpy>=1.18.5,<2.0.0
-pandas==1.5.3
+pandas>=2.2.0,<3.0.0 # limiting pandas to older than 3.x to avoid numpy 2.x being required 
 # opencv-python>=4.4.0.46,<4.11.0 # REMOVED: Handled by Jetson container
 Pillow>=7.1.2
 python-dotenv>=1.0.1

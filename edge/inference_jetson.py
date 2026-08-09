@@ -1,22 +1,10 @@
 """
-this script is adapted from val.py
+this script is adapted from inference_host.py - it runs on an edge device (Jetson Orin Nano Super)
+with unified CPU/GPU memory
 
 it takes trained YOLOMG .pt weights and uses them to detect drones 
 in video input. It measures the performance of the detection using mAP and FPS.
 """
-
-### ORIGINAL PLAN FOR FUNCTIONS
-# read video
-# allow buffer to be initialised (to warm up GPU and for motion masks)
-# begin timer
-# extract frame
-# compute motion mask for each frame
-# make prediction
-# end timer
-# discard frame in buffer
-# load labels
-# report accuracy and frame time
-# convert accuracy and frame time to mAP and FPS
 
 import sys
 from config import TEST_VIDEOS_DIR, TEST_VIDEOS_DIR_MINIMUM, LABELS_TEST_DIR, PROJECT_ROOT
@@ -891,8 +879,8 @@ def run_inference_directory(video_dir,
 if __name__ == "__main__":
     TEST_VIDEOS_DIR = TEST_VIDEOS_DIR
     LABEL_DIR = LABELS_TEST_DIR
-    WEIGHTS_640 = PROJECT_ROOT / "runs/train/ARD100_mask32-640_uavs/weights/best.pt"
-    WEIGHTS_1280 = PROJECT_ROOT / "runs/train/ARD100_mask32-1280_uavs/weights/best.pt"
+    WEIGHTS_640 = PROJECT_ROOT / "weights/best_640.pt"
+    WEIGHTS_1280 = PROJECT_ROOT / "weights/best_1280.pt"
 
     # FOR TESTING THIS INFERENCE PIPELINE WITH JUST A SINGLE VIDEO
     TEST_VIDEOS_DIR_MINIMUM = TEST_VIDEOS_DIR_MINIMUM
