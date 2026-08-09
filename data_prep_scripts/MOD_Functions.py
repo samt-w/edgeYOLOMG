@@ -375,6 +375,108 @@ def motion_compensate(frame1, frame2):
     return compensated, mask, avg_dst, motion_x, motion_y, homography_matrix
 
 
+def motion_compensate_cuda(frame1_gpu, frame2_gpu, lk_solver):
+    """
+    This function transforms frame1 so that frame1 matches the camera position of frame2
+
+    This is called "ego-motion compensation", and is required to avoid the entire background
+    being classified as 'movement' in the motion mask
+
+    This function performs the same role as motion_compensate(), but is written to 
+    be performed on GPU, not CPU
+
+    The input frames must be cv2.cuda_GpuMat objects
+    """
+    # cv2.cuda_GpuMat.size() returns (width, height)
+    width, height = frame2_gpu.size()
+    scale = 2
+
+    # create a grid of points across each image
+    frame1_grid_gpu = cv2.cuda.resize(frame1_gpu, (960 * scale, 540 * scale), interpolation=cv2.INTER_CUBIC)
+    frame2_grid_gpu = cv2.cuda.resize(frame2_gpu, (960 * scale, 540 * scale), interpolation=cv2.INTER_CUBIC)
+
+    width_grid = frame2_grid_gpu.size()[0]
+    height_grid = frame2_grid_gpu.size()[1]
+    
+    gridSizeW = 32 * scale
+    gridSizeH = 24 * scale
+    p1 = []
+    grid_numW = int(width_grid / gridSizeW - 1)
+    grid_numH = int(height_grid / gridSizeH - 1)
+    for i in range(grid_numW):
+        for j in range(grid_numH):
+            point = (np.float32(i * gridSizeW + gridSizeW / 2.0), np.float32(j * gridSizeH + gridSizeH / 2.0))
+            p1.append(point)
+    
+    # reshape the array, automatically computing dimensions with "-1", and specifying FP32 as
+    # required by cv2.cuda
+    pts_prev = np.array(p1, dtype=np.float32).reshape(-1, 1, 2)
+    # move points to GPU
+    pts_prev_gpu = cv2.cuda_GpuMat()
+    pts_prev_gpu.upload(pts_prev)
+
+    # use the Lucas-Kanade algorithm to track how grid points moved between frames
+    # -------------------------------
+    # COMMENTING OUT ORIGINAL LINE TO PASS OBJECT GLOBALLY
+    # lk_solver = cv2.cuda.SparsePyrLKOpticalFlow.create(winSize = (15, 15), maxLevel = 3)
+    # -------------------------------
+    pts_cur_gpu, status_gpu, err_gpu = lk_solver.calc(frame1_grid_gpu, frame2_grid_gpu, pts_prev_gpu, None)
+
+    # convert results to CPU for filtering
+    pts_cur = pts_cur_gpu.download()
+    status = status_gpu.download()
+
+    # Select the good points
+    good_new = pts_cur[status == 1] # Tracking points in the current frame
+    good_old = pts_prev[status == 1] # Tracking point in the previous frame
+
+    # Draw tracking box
+    motion_distance = []
+    translate_x = []
+    translate_y = []
+
+    # compute Euclidean distance for points. If point moved > 50px, remove it (to avoid tracking errors)
+    for new, old in zip(good_new, good_old):
+        a, b = new.ravel()
+        c, d = old.ravel()
+        motion_distance0 = np.sqrt((a - c) * (a - c) + (b - d) * (b - d))
+
+        if motion_distance0 > 50:
+            continue
+
+        translate_x.append(a - c)
+        translate_y.append(b - d)
+        motion_distance.append(motion_distance0)
+
+    if len(translate_x) == 0:
+        motion_x, motion_y, avg_dst = 0.0, 0.0, 0.0
+    else:
+        motion_x = np.mean(translate_x)
+        motion_y = np.mean(translate_y)
+        avg_dst = np.mean(motion_distance)
+
+    # if fewer than 15 valid points, just use identity matrix as not enough data
+    # otherwise, use the RANSAC algorithm to compute the transformation matrix
+    if len(good_old) < 15:
+        homography_matrix = np.array([[0.999, 0, 0], [0, 0.999, 0], [0, 0, 1]])
+    else:
+        homography_matrix, _ = cv2.findHomography(good_new, good_old, cv2.RANSAC, 3.0)
+
+    # Calculate the transformed image based on the transformation matrix
+    compensated_gpu = cv2.cuda.warpPerspective(frame1_gpu, homography_matrix, (width, height), flags=cv2.INTER_LINEAR + cv2.WARP_INVERSE_MAP)
+
+    # Calculate mask of valid pixels (invalid pixels are marked as 255)
+    # AMENDMENT TO ORIGINAL CODE:
+    # instead of computing inverse matrix, just warp a uniform matrix using the transformation matrix
+    # invalid pixels get marked as 0, and then get inverted using .bitwise_not() to match original logic
+    ones = np.full((height, width), 255, dtype = np.uint8)
+    ones_gpu = cv2.cuda_GpuMat()
+    ones_gpu.upload(ones)
+    warped_ones_gpu = cv2.cuda.warpPerspective(ones_gpu, homography_matrix, (width, height), flags=cv2.INTER_LINEAR + cv2.WARP_INVERSE_MAP)
+    mask_gpu = cv2.cuda.bitwise_not(warped_ones_gpu)
+
+    return compensated_gpu, mask_gpu, avg_dst, motion_x, motion_y, homography_matrix
+
 def motion_compensate_local(frame1, frame2):
     # grid-based KLT tracking
     lk_params = dict(winSize=(15, 15), maxLevel=3, criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.003))
