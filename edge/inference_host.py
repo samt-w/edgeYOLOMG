@@ -7,7 +7,6 @@ in video input. It measures the performance of the detection using mAP and FPS.
 """
 
 import sys
-from config import TEST_VIDEOS_DIR, TEST_VIDEOS_DIR_MINIMUM, LABELS_TEST_DIR, PROJECT_ROOT
 from pathlib import Path
 
 # add repo root filepath dynamically to import modules from other directories
@@ -15,6 +14,8 @@ FILE = Path(__file__).resolve()
 ROOT = FILE.parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
+
+from config import TEST_VIDEOS_DIR, TEST_VIDEOS_DIR_MINIMUM, LABELS_TEST_DIR, PROJECT_ROOT
 
 import cv2
 import torch
