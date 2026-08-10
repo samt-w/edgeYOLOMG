@@ -410,7 +410,7 @@ def motion_compensate_cuda(frame1_gpu, frame2_gpu, lk_solver):
     
     # reshape the array, automatically computing dimensions with "-1", and specifying FP32 as
     # required by cv2.cuda
-    pts_prev = np.array(p1, dtype=np.float32).reshape(-1, 1, 2)
+    pts_prev = np.array(p1, dtype=np.float32).reshape(1, -1, 2)
     # move points to GPU
     pts_prev_gpu = cv2.cuda_GpuMat()
     pts_prev_gpu.upload(pts_prev)
