@@ -412,7 +412,7 @@ def calculate_metrics(timings,
     file_exists = csv_file.is_file()
     
     headers = [
-        "Run_Group_ID", "Video", "Resolution", "Conf_Thres", "IoU_Thres", "Weights",
+        "Run_Group_ID", "Device", "Video", "Resolution", "Conf_Thres", "IoU_Thres", "Weights",
         "Precision", "Recall", "mAP@0.5", "mAP@0.5:0.95", 
         "FPS(Pipeline)", "FPS(Inference_Only)", 
         "Read(ms)", "Mask(ms)", "Prep(ms)", "Inference(ms)", "NMS(ms)", "Total(ms)"
@@ -420,6 +420,7 @@ def calculate_metrics(timings,
     
     row_data = [
         run_config["run_group_id"],
+        "host",
         run_config["video_name"],
         run_config["imgsz"],
         run_config["conf_thres"],
