@@ -72,8 +72,8 @@ def compute_mask_and_preprocess_cuda(target_frame_gpu, blur_frames_gpu, imgsz, s
     t_prep_start = time.time()
 
     # pad and resize the image while maintaining aspect ratio
-    target_img_gpu = letterbox_cuda(target_frame_gpu, new_shape = (imgsz, imgsz), color = (114, 114, 114), stride = stride)[0]
-    mask_img_gpu = letterbox_cuda(frameDiff_3d, new_shape = (imgsz, imgsz), color = (0, 0, 0), stride = stride)[0]
+    target_img_gpu = letterbox_cuda(target_frame_gpu, new_shape = (imgsz, imgsz), color = (114, 114, 114), stride = stride, auto=False)[0]
+    mask_img_gpu = letterbox_cuda(frameDiff_3d, new_shape = (imgsz, imgsz), color = (0, 0, 0), stride = stride, auto=False)[0]
     
     w0, h0 = target_frame_gpu.size()
 
