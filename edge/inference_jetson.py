@@ -452,42 +452,33 @@ def calculate_metrics(timings,
 # initialise reader class to queue frames for GPU
 class VideoReader:
     def __init__(self, video_filepath, queue_size = 30):
-        self.video_filepath = str(Path(video_filepath).resolve())
-        self.videocap = cv2.VideoCapture(self.video_filepath)
+        # GStreamer requires an absolute file path for its URI
+        video_filepath_abs = Path(video_filepath).resolve().as_posix()
+        
+        # GStreamer pipeline for Jetson hardware decoding:
+        # nvvidconv: hardware-accelerated memory/format conversion to BGRx
+        # videoconvert: CPU conversion to standard BGR for OpenCV compatibility
+        gst_pipeline = (
+            f"filesrc location={video_filepath_abs} ! "
+            "qtdemux ! h264parse ! nvv4l2decoder ! "
+            "nvvidconv ! video/x-raw, format=BGRx ! "
+            "videoconvert ! video/x-raw, format=BGR ! "
+            "appsink sync=false"
+        )
+
+        # attempt to initialise hardware-accelerated reading
+        self.videocap = cv2.VideoCapture(gst_pipeline, cv2.CAP_GSTREAMER)
+        
+        # fallback mechanism: check if GStreamer opened successfully
         if not self.videocap.isOpened():
-            print(f"\nERROR: Failed to open video {self.video_filepath}", file=sys.stderr)
-        # # ------------------------------------------------------------------------
-        # # COMMENTING OUT GSTREAMER CODE - CONFLICTS WITH CHOSEN CONTAINER, SO REVERTING 
-        # # TO CPU VIDEO PROCESSING
-
-        # # GStreamer requires an absolute file path for its URI
-        # video_filepath_abs = Path(video_filepath).resolve().as_posix()
-        
-        # # GStreamer pipeline for Jetson hardware decoding:
-        # # nvvidconv: hardware-accelerated memory/format conversion to BGRx
-        # # videoconvert: CPU conversion to standard BGR for OpenCV compatibility
-        # gst_pipeline = (
-        #     f"filesrc location={video_filepath_abs} ! "
-        #     "qtdemux ! h264parse ! nvv4l2decoder ! "
-        #     "nvvidconv ! video/x-raw, format=BGRx ! "
-        #     "videoconvert ! video/x-raw, format=BGR ! "
-        #     "appsink sync=false"
-        # )
-
-        # # attempt to initialise hardware-accelerated reading
-        # self.videocap = cv2.VideoCapture(gst_pipeline, cv2.CAP_GSTREAMER)
-        
-        # # fallback mechanism: check if GStreamer opened successfully
-        # if not self.videocap.isOpened():
-        #     print("\n" + "!" * 80, file=sys.stderr)
-        #     print("ERROR: Failed to initialize GStreamer/NVDEC hardware decoding pipeline.", file=sys.stderr)
-        #     print("Falling back to standard OpenCV CPU VideoCapture.", file=sys.stderr)
-        #     print("Ensure OpenCV is compiled with GStreamer support and NVDEC is available.", file=sys.stderr)
-        #     print("!" * 80 + "\n", file=sys.stderr)
+            print("\n" + "!" * 80, file=sys.stderr)
+            print("ERROR: Failed to initialize GStreamer/NVDEC hardware decoding pipeline.", file=sys.stderr)
+            print("Falling back to standard OpenCV CPU VideoCapture.", file=sys.stderr)
+            print("Ensure OpenCV is compiled with GStreamer support and NVDEC is available.", file=sys.stderr)
+            print("!" * 80 + "\n", file=sys.stderr)
             
-        #     # Fall back to original OpenCV behavior
-        #     self.videocap = cv2.VideoCapture(str(video_filepath))
-        # # ------------------------------------------------------------------------
+            # Fall back to original OpenCV behavior
+            self.videocap = cv2.VideoCapture(str(video_filepath))
         
         # initialise a queue capped at the maximum size
         self.framequeue = Queue(maxsize = queue_size)
