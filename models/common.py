@@ -668,16 +668,35 @@ class DetectMultiBackend(nn.Module):
                 model = runtime.deserialize_cuda_engine(f.read())
             bindings = OrderedDict()
             fp16 = False  # default updated below
-            for index in range(model.num_bindings):
-                name = model.get_binding_name(index)
-                dtype = trt.nptype(model.get_binding_dtype(index))
-                shape = tuple(model.get_binding_shape(index))
-                data = torch.from_numpy(np.empty(shape, dtype=np.dtype(dtype))).to(device)
-                bindings[name] = Binding(name, dtype, shape, data, int(data.data_ptr()))
-                if model.binding_is_input(index) and dtype == np.float16:
-                    fp16 = True
-            binding_addrs = OrderedDict((n, d.ptr) for n, d in bindings.items())
             context = model.create_execution_context()
+            
+            # TensorRT 10+ compatibility
+            is_trt10 = int(trt.__version__.split('.')[0]) >= 10
+            
+            if is_trt10:
+                for i in range(model.num_io_tensors):
+                    # TRT10 uses named tensors, not indexes
+                    name = model.get_tensor_name(i)
+                    dtype = trt.nptype(model.get_tensor_dtype(name))
+                    shape = tuple(model.get_tensor_shape(name))
+                    data = torch.from_numpy(np.empty(shape, dtype=np.dtype(dtype))).to(device)
+                    bindings[name] = Binding(name, dtype, shape, data, int(data.data_ptr()))
+                    
+                    is_input = model.get_tensor_mode(name) == trt.TensorIOMode.INPUT
+                    if is_input and dtype == np.float16:
+                        fp16 = True
+                    context.set_tensor_address(name, int(data.data_ptr()))
+            else:
+                for index in range(model.num_bindings):
+                    name = model.get_binding_name(index)
+                    dtype = trt.nptype(model.get_binding_dtype(index))
+                    shape = tuple(model.get_binding_shape(index))
+                    data = torch.from_numpy(np.empty(shape, dtype=np.dtype(dtype))).to(device)
+                    bindings[name] = Binding(name, dtype, shape, data, int(data.data_ptr()))
+                    if model.binding_is_input(index) and dtype == np.float16:
+                        fp16 = True
+
+            binding_addrs = OrderedDict((n, d.ptr) for n, d in bindings.items())
             batch_size = bindings['images'].shape[0]
         elif coreml:  # CoreML
             LOGGER.info(f'Loading {w} for CoreML inference...')
@@ -752,9 +771,20 @@ class DetectMultiBackend(nn.Module):
             # bind both RGB and motion mask inputs to TensorRT
             assert im.shape == self.bindings['images'].shape, (im.shape, self.bindings['images'].shape)
             assert im2.shape == self.bindings['masks'].shape, (im2.shape, self.bindings['masks'].shape)
-            self.binding_addrs['images'] = int(im.data_ptr())
-            self.binding_addrs['masks'] = int(im2.data_ptr())
-            self.context.execute_v2(list(self.binding_addrs.values()))
+            
+            import tensorrt as trt
+            is_trt10 = int(trt.__version__.split('.')[0]) >= 10
+            
+            if is_trt10:
+                self.context.set_tensor_address('images', int(im.data_ptr()))
+                self.context.set_tensor_address('masks', int(im2.data_ptr()))
+                self.context.set_tensor_address('output', int(self.bindings['output'].data.data_ptr()))
+                self.context.execute_async_v3(torch.cuda.current_stream().cuda_stream)
+            else:
+                self.binding_addrs['images'] = int(im.data_ptr())
+                self.binding_addrs['masks'] = int(im2.data_ptr())
+                self.context.execute_v2(list(self.binding_addrs.values()))
+            
             y = self.bindings['output'].data
         elif self.coreml:  # CoreML
             im = im.permute(0, 2, 3, 1).cpu().numpy()  # torch BCHW to numpy BHWC shape(1,320,192,3)
