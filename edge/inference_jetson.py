@@ -452,33 +452,42 @@ def calculate_metrics(timings,
 # initialise reader class to queue frames for GPU
 class VideoReader:
     def __init__(self, video_filepath, queue_size = 30):
-        # GStreamer requires an absolute file path for its URI
-        video_filepath_abs = Path(video_filepath).resolve().as_posix()
-        
-        # GStreamer pipeline for Jetson hardware decoding:
-        # nvvidconv: hardware-accelerated memory/format conversion to BGRx
-        # videoconvert: CPU conversion to standard BGR for OpenCV compatibility
-        gst_pipeline = (
-            f"filesrc location={video_filepath_abs} ! "
-            "qtdemux ! h264parse ! nvv4l2decoder ! "
-            "nvvidconv ! video/x-raw, format=BGRx ! "
-            "videoconvert ! video/x-raw, format=BGR ! "
-            "appsink sync=false"
-        )
-
-        # attempt to initialise hardware-accelerated reading
-        self.videocap = cv2.VideoCapture(gst_pipeline, cv2.CAP_GSTREAMER)
-        
-        # fallback mechanism: check if GStreamer opened successfully
+        self.video_filepath = str(Path(video_filepath).resolve())
+        self.videocap = cv2.VideoCapture(self.video_filepath)
         if not self.videocap.isOpened():
-            print("\n" + "!" * 80, file=sys.stderr)
-            print("ERROR: Failed to initialize GStreamer/NVDEC hardware decoding pipeline.", file=sys.stderr)
-            print("Falling back to standard OpenCV CPU VideoCapture.", file=sys.stderr)
-            print("Ensure OpenCV is compiled with GStreamer support and NVDEC is available.", file=sys.stderr)
-            print("!" * 80 + "\n", file=sys.stderr)
+            print(f"\nERROR: Failed to open video {self.video_filepath}", file=sys.stderr)
+        # # ------------------------------------------------------------------------
+        # # COMMENTING OUT GSTREAMER CODE - CONFLICTS WITH CHOSEN CONTAINER, SO REVERTING 
+        # # TO CPU VIDEO PROCESSING
+
+        # # GStreamer requires an absolute file path for its URI
+        # video_filepath_abs = Path(video_filepath).resolve().as_posix()
+        
+        # # GStreamer pipeline for Jetson hardware decoding:
+        # # nvvidconv: hardware-accelerated memory/format conversion to BGRx
+        # # videoconvert: CPU conversion to standard BGR for OpenCV compatibility
+        # gst_pipeline = (
+        #     f"filesrc location={video_filepath_abs} ! "
+        #     "qtdemux ! h264parse ! nvv4l2decoder ! "
+        #     "nvvidconv ! video/x-raw, format=BGRx ! "
+        #     "videoconvert ! video/x-raw, format=BGR ! "
+        #     "appsink sync=false"
+        # )
+
+        # # attempt to initialise hardware-accelerated reading
+        # self.videocap = cv2.VideoCapture(gst_pipeline, cv2.CAP_GSTREAMER)
+        
+        # # fallback mechanism: check if GStreamer opened successfully
+        # if not self.videocap.isOpened():
+        #     print("\n" + "!" * 80, file=sys.stderr)
+        #     print("ERROR: Failed to initialize GStreamer/NVDEC hardware decoding pipeline.", file=sys.stderr)
+        #     print("Falling back to standard OpenCV CPU VideoCapture.", file=sys.stderr)
+        #     print("Ensure OpenCV is compiled with GStreamer support and NVDEC is available.", file=sys.stderr)
+        #     print("!" * 80 + "\n", file=sys.stderr)
             
-            # Fall back to original OpenCV behavior
-            self.videocap = cv2.VideoCapture(str(video_filepath))
+        #     # Fall back to original OpenCV behavior
+        #     self.videocap = cv2.VideoCapture(str(video_filepath))
+        # # ------------------------------------------------------------------------
         
         # initialise a queue capped at the maximum size
         self.framequeue = Queue(maxsize = queue_size)
@@ -649,7 +658,9 @@ def run_inference_directory(video_dir,
             labels, true_class_indices = load_labels(label_path, h0, w0)
             
             if len(labels) == 0:
-                continue  # skip empty frames
+                # loudly skip empty frames
+                print(f"Warning: No labels found for {video_name} frame {target_frame_idx:04d}. Skipping frame.")
+                continue
             
             # preprocessing
             target_frame_gpu = frame_buffer[2][0]
