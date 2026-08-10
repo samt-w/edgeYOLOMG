@@ -723,11 +723,16 @@ class DetectMultiBackend(nn.Module):
                 raise Exception('ERROR: YOLOv5 TF.js inference is not supported')
         self.__dict__.update(locals())  # assign all variables to self
 
-    def forward(self, im,im2, augment=False, visualize=False, val=False):
+    def forward(self, im, im2, augment=False, visualize=False, val=False):
         # YOLOv5 MultiBackend inference
         b, ch, h, w = im.shape  # batch, channel, height, width
+        # cast both inputs to FP16 if the engine requires it
+        im = im.half() if self.fp16 else im.float()
+        im2 = im2.half() if self.fp16 else im2.float()
+    
+
         if self.pt or self.jit:  # PyTorch
-            y = self.model(im,im2) if self.jit else self.model(im,im2, augment=augment, visualize=visualize)
+            y = self.model(im, im2) if self.jit else self.model(im, im2, augment=augment, visualize=visualize)
             return y if val else y[0]
         elif self.dnn:  # ONNX OpenCV DNN
             im = im.cpu().numpy()  # torch to numpy
@@ -744,8 +749,11 @@ class DetectMultiBackend(nn.Module):
             request.infer()
             y = request.output_blobs['output'].buffer  # name=next(iter(request.output_blobs))
         elif self.engine:  # TensorRT
+            # bind both RGB and motion mask inputs to TensorRT
             assert im.shape == self.bindings['images'].shape, (im.shape, self.bindings['images'].shape)
+            assert im2.shape == self.bindings['masks'].shape, (im2.shape, self.bindings['masks'].shape)
             self.binding_addrs['images'] = int(im.data_ptr())
+            self.binding_addrs['masks'] = int(im2.data_ptr())
             self.context.execute_v2(list(self.binding_addrs.values()))
             y = self.bindings['output'].data
         elif self.coreml:  # CoreML

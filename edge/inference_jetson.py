@@ -2,7 +2,7 @@
 this script is adapted from inference_host.py - it runs on an edge device (Jetson Orin Nano Super)
 with unified CPU/GPU memory
 
-it takes trained YOLOMG .pt weights and uses them to detect drones 
+it takes a TensorRT .engine file compiled from trained YOLOMG .pt weights and uses them to detect drones 
 in video input. It measures the performance of the detection using mAP and FPS.
 """
 
@@ -27,42 +27,72 @@ from datetime import datetime
 from queue import Queue
 from threading import Thread
 
-from data_prep_scripts.MOD_Functions import motion_compensate
-from utils.augmentations import letterbox
+from data_prep_scripts.MOD_Functions import motion_compensate_cuda
+from utils.augmentations import letterbox_cuda
 from utils.metrics import box_iou, ap_per_class
 from utils.general import check_img_size, non_max_suppression, xywhn2xyxy, scale_coords
 from utils.torch_utils import select_device
-from models.experimental import attempt_load
+from models.common import DetectMultiBackend
 
-from concurrent.futures import ThreadPoolExecutor
-
-def compute_mask_in_memory(lastFrame1, lastFrame2, currentFrame):
+def compute_mask_and_preprocess_cuda(target_frame_gpu, blur_frames_gpu, imgsz, stride, lk_solver):
     """
-    This function computes a motion mask for a particular frame, lastFrame2, given one preceding frame,
-    lastFrame1, and and one succeeding frame, currentFrame.
+    This function computes ego motion compensation (using Lucas-Kanade), a motion 
+    mask, and letterboxing for three sequential frames (which have previously
+    been blurred and grescaled)
 
-    The temporal order of the frames is:
-    - lastFrame1 (oldest)
-    - lastFrame2
-    - currentFrame (newest)
-
-    This naming convention comes from the original code.
-
-    This function differs to its data preparation counterpart because it holds the 
-    mask in memory rather than saving it to disk. This is necessary for inference.
+    Args:
+        target_frame_gpu: the raw BGR current frame as a cv2.cuda_GpuMat
+        blur_frames_gpu: a tuple of three pre-blurred cv2.cuda_GpuMat frames (lastFrame1, targetFrame, currentFrame)
+        imgsz: target image inference size
+        stride: model's maximum stride (for padding calculation)
+        lk_solver: the global cv2.cuda.SparsePyrLKOpticalFlow object
+        
+    Returns a tuple (img1, img2, (h0, w0), t_mask, t_prep) where img1 is the processed target frame 
+    tensor, img2 is the motion mask tensor, (h0, w0) is the original image height and width, and t_mask 
+    and t_prep are the measured processing times in seconds
     """
+    t_mask_start = time.time()
+    
+    blur1_gpu, blur_target_gpu, blur2_gpu = blur_frames_gpu
+
     # compute motion compensation and differences
-    img_compensate1, _, _, _, _, _ = motion_compensate(lastFrame1, lastFrame2)
-    img_compensate2, _, _, _, _, _ = motion_compensate(currentFrame, lastFrame2)
-    frameDiff1 = cv2.absdiff(lastFrame2, img_compensate1)    
-    frameDiff2 = cv2.absdiff(lastFrame2, img_compensate2)
+    comp1_gpu, _, _, _, _, _ = motion_compensate_cuda(blur1_gpu, blur_target_gpu, lk_solver)
+    comp2_gpu, _, _, _, _, _ = motion_compensate_cuda(blur2_gpu, blur_target_gpu, lk_solver)
+    frameDiff1 = cv2.cuda.absdiff(blur_target_gpu, comp1_gpu)
+    frameDiff2 = cv2.cuda.absdiff(blur_target_gpu, comp2_gpu)
 
     # average the differences to create the continuous motion mask
-    frameDiff = cv2.addWeighted(frameDiff1, 0.5, frameDiff2, 0.5, 0) 
-    
+    frameDiff = cv2.cuda.addWeighted(frameDiff1, 0.5, frameDiff2, 0.5, 0)
+
     # inflate 2D motion mask to 3D tensor
-    frameDiff_3d = cv2.cvtColor(frameDiff, cv2.COLOR_GRAY2BGR)
-    return frameDiff_3d
+    frameDiff_3d = cv2.cuda.cvtColor(frameDiff, cv2.COLOR_GRAY2BGR)
+
+    t_mask = time.time() - t_mask_start
+    t_prep_start = time.time()
+
+    # pad and resize the image while maintaining aspect ratio
+    target_img_gpu = letterbox_cuda(target_frame_gpu, new_shape = (imgsz, imgsz), color = (114, 114, 114), stride = stride)[0]
+    mask_img_gpu = letterbox_cuda(frameDiff_3d, new_shape = (imgsz, imgsz), color = (0, 0, 0), stride = stride)[0]
+    
+    w0, h0 = target_frame_gpu.size()
+
+    # send frames to CPU for conversion to PyTorch
+    target_cpu = target_img_gpu.download()
+    mask_cpu = mask_img_gpu.download()
+    
+    # convert from OpenCV's default BGR to RGB
+    target_cpu = target_cpu[:, :, ::-1].transpose(2, 0, 1)
+    mask_cpu = mask_cpu[:, :, ::-1].transpose(2, 0, 1)
+    
+    # convert frames to PyTorch format for inference
+    # add batch dimension to fit pytorch batch logic
+    # adds a dummy dimension at index 0 to create a 4D tensor of 1 image in the batch (1, C, H, W)
+    img1 = torch.from_numpy(np.ascontiguousarray(target_cpu)).unsqueeze(0)
+    img2 = torch.from_numpy(np.ascontiguousarray(mask_cpu)).unsqueeze(0)
+
+    t_prep = time.time() - t_prep_start
+
+    return img1, img2, (h0, w0), t_mask, t_prep
 
 def load_model_and_device(weights, device_id, imgsz):
     """
@@ -79,22 +109,19 @@ def load_model_and_device(weights, device_id, imgsz):
     device = select_device(device_id)
     half = device.type != "cpu" # use half precision (FP16) only if using a GPU
     
-    model = attempt_load(weights, map_location = device)
-    stride = int(model.stride.max())
+    model = DetectMultiBackend(weights, device=device, fp16=half)
+    
+    stride = int(model.stride)
     imgsz = check_img_size(imgsz, s = stride) # ensure image size is a multiple of the max stride
     
-    if half:
-        model.half() # convert model weights to FP16 if using GPU
     model.eval() # set model to evaluation mode
     
-    # get class names from model payload
-    names = model.module.names if hasattr(model, 'module') else model.names
-    
-    return model, device, half, stride, imgsz, names
+    return model, device, half, stride, imgsz, model.names
 
 def warmup_model(model,
-                 device, 
-                 imgsz, 
+                 device,
+                 half,
+                 imgsz,
                  warmup_iterations):
     """
     Run dummy forward passes to initialise CUDA context on GPUs
@@ -102,59 +129,24 @@ def warmup_model(model,
     Args:
         model: the loaded YOLO model
         device: the execution device
+        half: specifying whether the data should be FP16
         imgsz: the image size used for inference
         warmup_iterations: number of dummy passes to execute
     """
     if device.type != "cpu":
         # create a dummy tensor
-        dummy_img = torch.zeros(1, 3, imgsz, imgsz).to(device).type_as(next(model.parameters()))
+        dummy_img = torch.zeros(1, 3, imgsz, imgsz).to(device)
+        dummy_img = dummy_img.half() if half else dummy_img.float()
         for _ in range(warmup_iterations):
-            model(dummy_img, dummy_img)
-
-def preprocess_image(image, 
-                     imgsz,
-                     stride,
-                     pad_colour):
-    """
-    Resizes, pads, and normalises the numpy image array into a CPU tensor
-    
-    Args:
-        image: the raw BGR image array 
-        imgsz: target image inference size
-        stride: model's maximum stride (for padding calculation)
-        pad_colour: a three-integer tuple setting the colour of the letterbox padding (should be black if no motion)
-        
-    Returns a tuple (tensor_image, (h0, w0)) where tensor_image is the processed tensor 
-    and (h0, w0) is the original image height and width
-    """
-    h0, w0 = image.shape[:2]
-    
-    # pad and resize the image while maintaining aspect ratio
-    img = letterbox(im = image,
-                    new_shape = (imgsz, imgsz),
-                    color = pad_colour, # force specific padding colour
-                    auto = True, # force minimum-stride padding to match val.py's "rect = False if task == 'benchmark' else pt"
-                    stride = stride)[0]
-    
-    # convert from OpenCV's default BGR to RGB
-    img = img[:, :, ::-1].transpose(2, 0, 1)
-    img = np.ascontiguousarray(img)  # optimise memory layout for pytorch
-    
-    # convert to CPU tensor
-    img = torch.from_numpy(img)
-    
-    # add batch dimension to fit pytorch batch logic and pin memory for fast GPU transfer
-    # adds a dummy dimension at index 0 to create a 4D tensor of 1 image in the batch (1, C, H, W)
-    img = img.unsqueeze(0).pin_memory()
-    
-    return img, (h0, w0)
+            # DetectMultiBackend requires inputs as tuple
+            model((dummy_img, dummy_img))
 
 def execute_prediction(model,
-                  img1,
-                  img2,
-                  device,
-                  conf_thres = 0.001,
-                  iou_thres = 0.4):
+                       img1,
+                       img2,
+                       device,
+                       conf_thres = 0.001,
+                       iou_thres = 0.4):
     """
     Executes forward pass on a single frame and apply non-maximum suppression
     
@@ -178,25 +170,33 @@ def execute_prediction(model,
         start_inf.record()
         with torch.no_grad():
             # forward pass
-            pred = model(img1, img2, augment = False)[0]
+            pred = model(img1, img2, augment = False)
+            # check whether the output is bundled as a list or tuple, and pass just 
+            # the prediction tensor onwards
+            if isinstance(pred, (list, tuple)):
+                pred = pred[0]
 
         # end timing inference (will also use this to start timing NMS)
         end_inf.record()
-            
+        
         # apply NMS
         pred = non_max_suppression(pred, conf_thres, iou_thres)[0]
-
+        
         # end timing NMS
         end_nms.record()
 
         # return unsynchronised timing events
         return pred, start_inf, end_inf, end_nms
-
+        
     else:
         # logic for executing and timing CPU runs
         t0 = time.time()
         with torch.no_grad():
-            pred = model(img1, img2, augment = False)[0]
+            pred = model(img1, img2, augment = False)
+            # check whether the output is bundled as a list or tuple, and pass just 
+            # the prediction tensor onwards
+            if isinstance(pred, (list, tuple)):
+                pred = pred[0]
         t1 = time.time()
         pred = non_max_suppression(pred, conf_thres, iou_thres)[0]
         t2 = time.time()
@@ -240,8 +240,8 @@ def load_labels(label_path,
                 # only include frames with positive class labels
                 if len(labels):
                     true_class_indices = labels[:, 0].tolist()
-                    # create labels tensor and pin memory for fast GPU transfer 
-                    labels_pt_tensor = torch.from_numpy(labels).pin_memory()
+                    # create labels tensor
+                    labels_pt_tensor = torch.from_numpy(labels)
                 
     return (labels_pt_tensor, true_class_indices)
 
@@ -370,14 +370,13 @@ def calculate_metrics(timings,
         print(f"Total time:  {metrics['Total_ms']:.2f} ms")
     else:
         print("Not enough frames processed to calculate FPS.")
-
+    
     # accuracy/mAP calculation
     if not stats:
         print("\nNo targets or predictions found. Cannot calculate mAP.")
     else:
         # convert stats tuples into arrays
         stats_combined = [np.concatenate(x, 0) for x in zip(*stats)]
-        
         if len(stats_combined) and stats_combined[0].any():
             # compute precision, recall, and AP per class
             tp, fp, p, r, f1, ap, ap_class = ap_per_class(*stats_combined,
@@ -403,7 +402,7 @@ def calculate_metrics(timings,
             print(f"mAP@0.5:0.95: {metrics['mAP_50_95']:.4f}")
         else:
             print("\nNo targets or predictions found. Cannot calculate mAP.")
-
+    
     print("="*40)
 
     # Save results to CSV
@@ -444,13 +443,40 @@ def calculate_metrics(timings,
         if not file_exists:
             writer.writerow(headers)
         writer.writerow(row_data)
-        
+    
     print(f"Results appended to {csv_file.resolve()}")
 
-# initialise threaded reader class to queue frames for GPU
+# initialise reader class to queue frames for GPU
 class VideoReader:
     def __init__(self, video_filepath, queue_size = 30):
-        self.videocap = cv2.VideoCapture(str(video_filepath))
+        # GStreamer requires an absolute file path for its URI
+        video_filepath_abs = Path(video_filepath).resolve().as_posix()
+        
+        # GStreamer pipeline for Jetson hardware decoding:
+        # nvvidconv: hardware-accelerated memory/format conversion to BGRx
+        # videoconvert: CPU conversion to standard BGR for OpenCV compatibility
+        gst_pipeline = (
+            f"filesrc location={video_filepath_abs} ! "
+            "qtdemux ! h264parse ! nvv4l2decoder ! "
+            "nvvidconv ! video/x-raw, format=BGRx ! "
+            "videoconvert ! video/x-raw, format=BGR ! "
+            "appsink sync=false"
+        )
+
+        # attempt to initialise hardware-accelerated reading
+        self.videocap = cv2.VideoCapture(gst_pipeline, cv2.CAP_GSTREAMER)
+        
+        # fallback mechanism: check if GStreamer opened successfully
+        if not self.videocap.isOpened():
+            print("\n" + "!" * 80, file=sys.stderr)
+            print("ERROR: Failed to initialize GStreamer/NVDEC hardware decoding pipeline.", file=sys.stderr)
+            print("Falling back to standard OpenCV CPU VideoCapture.", file=sys.stderr)
+            print("Ensure OpenCV is compiled with GStreamer support and NVDEC is available.", file=sys.stderr)
+            print("!" * 80 + "\n", file=sys.stderr)
+            
+            # Fall back to original OpenCV behavior
+            self.videocap = cv2.VideoCapture(str(video_filepath))
+        
         # initialise a queue capped at the maximum size
         self.framequeue = Queue(maxsize = queue_size)
         # flag to stop the thread at the end of the video
@@ -492,158 +518,6 @@ class VideoReader:
         self.stopped = True
         self.videocap.release()
 
-def process_single_frame_payload(target_frame,
-                                 mask_frames,
-                                 target_frame_idx,
-                                 video_name,
-                                 label_dir,
-                                 imgsz,
-                                 stride,
-                                 target_t_read,
-                                 max_workers):
-    """
-    Helper function to compute mask, preprocess images, and load labels for a single frame.
-    Runs inside the multi-frame thread pool.
-
-    Args:
-        target_frame: raw array for current frame
-        mask_frames: tuple of three preprocessed arrays (lastFrame1, targetFrame, currentFrame) to compute motion mask
-        target_frame_idx: frame number for target_frame, used to locate correct label
-        video_name: name of current video (used to locate labels)
-        label_dir: directory path containing YOLO .txt labels
-        imgsz: target image size
-        stride: model's maximum stride, used for letterbox padding
-        max_workers: the number of permitted threads
-    """
-    h0_orig, w0_orig = target_frame.shape[:2]
-    label_path = label_dir / f"{video_name}_{target_frame_idx:04d}.txt"
-    labels, true_class_indices = load_labels(label_path, h0_orig, w0_orig)
-    
-    if len(labels) == 0:
-        return None  # skip empty frames
-    
-    t_mask_start = time.time()
-    mask = compute_mask_in_memory(mask_frames[0], mask_frames[1], mask_frames[2])
-    t_mask_end = time.time()
-    
-    t_prep_start = time.time()
-    img1, (h0, w0) = preprocess_image(target_frame, imgsz, stride, pad_colour=(114, 114, 114))
-    img2, _ = preprocess_image(mask, imgsz, stride, pad_colour=(0, 0, 0))
-    t_prep_end = time.time()
-    
-    return {
-        "img1": img1,
-        "img2": img2,
-        "labels": labels,
-        "true_class_indices": true_class_indices,
-        "h0": h0,
-        "w0": w0,
-        "t_read": target_t_read,
-        "t_mask": (t_mask_end - t_mask_start) / max_workers, # time per finished frame
-        "t_prep": (t_prep_end - t_prep_start) / max_workers # time per finished frame
-    }
-
-def data_prep_worker(video_name,
-                     cap,
-                     label_dir,
-                     imgsz,
-                     stride,
-                     inference_queue,
-                     max_workers = 3):
-    """
-    Background worker multithreads that handle CPU-bound data preprocessing
-
-    Uses frame indexes to ensure frame ordering in inference queue is correct
-
-    Args:
-        video_name: name of current video (used to locate labels)
-        cap: OpenCV object of the current video
-        label_dir: directory path containing YOLO .txt labels
-        imgsz: target image size
-        stride: model's maximum stride, used for letterbox padding
-        inference_queue: Queue object where processed data is placed for the GPU
-
-    Sends dictionary of tensors and labels to the inference queue
-    """
-    frame_buffer = deque(maxlen = 5)
-    frame_count = 0
-    # starting indexing at 3 to match the target frame index
-    next_output_idx = 3
-    pending_futures = {}
-
-    # threads process max 3 frames concurrently on the CPU
-    with ThreadPoolExecutor(max_workers = max_workers) as pool:
-        while cap.isOpened():
-            ret, frame, t_read = cap.read()
-            
-            if not ret or frame is None:
-                break
-                
-            frame_count += 1
-            # greyscale and blur frame for feeding to motion mask function
-            grey_blur_frame = cv2.cvtColor(cv2.GaussianBlur(frame, (11, 11), 0), cv2.COLOR_BGR2GRAY)
-            # add frame, processed frame, and read time to buffer
-            frame_buffer.append((frame, grey_blur_frame, t_read))
-
-            # skip inference until 5-frame buffer populated
-            if len(frame_buffer) < 5:
-                continue
-
-            target_frame = frame_buffer[2][0]
-            target_t_read = frame_buffer[2][2]
-            target_frame_idx = frame_count - 2
-
-            mask_frames = (frame_buffer[0][1], frame_buffer[2][1], frame_buffer[4][1])
-
-            # submit frames to pool
-            future = pool.submit(process_single_frame_payload,
-                                 target_frame,
-                                 mask_frames,
-                                 target_frame_idx,
-                                 video_name,
-                                 label_dir,
-                                 imgsz,
-                                 stride,
-                                 target_t_read,
-                                 max_workers)
-
-            pending_futures[target_frame_idx] = future
-
-            # REORDERING BUFFER
-            # push completed frames to inference_queue in frame index order, NOT completion order
-            
-            # check whether the next frame has been read and submitted as a future            
-            while next_output_idx in pending_futures:
-                fut = pending_futures[next_output_idx]
-
-                # check whether next frame has completed processing - if not, exit and try again in next loop
-                if not fut.done():
-                    break
-
-                # if next frame has completed, advance the pointer
-                payload = fut.result()
-                del pending_futures[next_output_idx]
-                next_output_idx += 1
-        
-                # push completed frame to queue (blocks by default if queue hits maxsize)
-                if payload is not None:
-                    inference_queue.put(payload)
-
-        # remove remaining completed futures at end of frame
-        while pending_futures:
-            if next_output_idx in pending_futures:
-                fut = pending_futures[next_output_idx]
-                payload = fut.result()
-                del pending_futures[next_output_idx]
-                next_output_idx += 1
-                if payload is not None:
-                    inference_queue.put(payload)
-            else:
-                next_output_idx += 1
-        
-    # add None to queue at end of video to tell GPU the video is finished
-    inference_queue.put(None)
-
 def run_inference_directory(video_dir,
                             label_dir,
                             weights,
@@ -672,7 +546,7 @@ def run_inference_directory(video_dir,
     """
     video_dir = Path(video_dir)
     label_dir = Path(label_dir)
-
+    
     # create run identifier
     run_time = datetime.now().strftime("%Y%m%d-%H%M%S")
     run_group_id = f"YOLOMG-Inference-Run_{run_time}"
@@ -684,13 +558,18 @@ def run_inference_directory(video_dir,
         output_uri=False,
         reuse_last_task_id=False
     )
-
+    
     # initialise model
     print(f"Loading weights from {weights}...")
     model, device, half, stride, imgsz, names = load_model_and_device(weights, device_id, imgsz)
     
     print("Warming up CUDA context...")
-    warmup_model(model, device, imgsz, warmup_iterations = 3)
+    warmup_model(model, device, half, imgsz, warmup_iterations = 3)
+    
+    # initialise the CUDA Lucas-Kinade Solver globally
+    lk_solver = cv2.cuda.SparsePyrLKOpticalFlow.create(winSize = (15, 15), maxLevel = 3)
+    gaussian_filter = cv2.cuda.createGaussianFilter(cv2.CV_8UC1, cv2.CV_8UC1, (11, 11), 0)
+
     
     # initialise array for mAP50:90 calculation
     iou_vector = torch.linspace(0.5, 0.95, 10, device = device)
@@ -708,27 +587,16 @@ def run_inference_directory(video_dir,
     overall_stats = []
     overall_inference_count = 0
 
-    global_inference_count = 0 # for enabling pipeline CUDA warm-up
-
     for video_path in video_files:
         video_name = video_path.stem
-    
+        
         # initialise video and inference queue
         cap = VideoReader(video_path)
-        inference_queue = Queue(maxsize = 30)
-
-        # initialise background thread for data preprocessing
-        prep_thread = Thread(target = data_prep_worker,
-                             args = (video_name,
-                                     cap,
-                                     label_dir,
-                                     imgsz,
-                                     stride,
-                                     inference_queue),
-                             daemon = True)
-        prep_thread.start()
-
+        frame_buffer = deque(maxlen = 5)
+        t_read_buffer = deque(maxlen = 5)
+        
         video_inference_count = 0
+        frame_count = 0
         video_stats = []
 
         # create dictionaries to hold timings
@@ -747,47 +615,65 @@ def run_inference_directory(video_dir,
         last_frame_end_time = time.time() 
         
         while True:
-            # pull next frame's pre-packaged data from the queue
-            payload = inference_queue.get()
-            
-            # if next item is 'None', video is finished
-            if payload is None:
+            ret, frame, t_read = cap.read()
+            if not ret:
                 break
                 
-            # unpack data
-            img1_cpu = payload["img1"]
-            img2_cpu = payload["img2"]
-            labels = payload["labels"]
-            true_class_indices = payload["true_class_indices"]
-            h0 = payload["h0"]
-            w0 = payload["w0"]
-            # run inference and non-maximum suppression
-            if device.type != 'cpu':
-                # transfer CPU tensor to GPU
-                img1 = img1_cpu.to(device, non_blocking = True)
-                img1 = img1.half() if half else img1.float()
-                img1 /= 255.0
-                
-                img2 = img2_cpu.to(device, non_blocking = True)
-                img2 = img2.half() if half else img2.float()
-                img2 /= 255.0
-
-                # transfer labels to GPU
-                labels = labels.to(device, non_blocking = True)
-
-                # execute prediction and record timings
-                pred, inf_start_evt, inf_end_evt, nms_end_evt = execute_prediction(model, img1, img2, device, conf_thres, iou_thres)
-                
-                # synchronise the pipeline timings
-                nms_end_evt.synchronize() 
-                
-                # compute GPU kernel times
-                t_inf = inf_start_evt.elapsed_time(inf_end_evt) / 1000.0
-                t_nms = inf_end_evt.elapsed_time(nms_end_evt) / 1000.0
+            frame_count += 1
+            # convert each frame to GpuMat object and blur
+            frame_gpu = cv2.cuda_GpuMat()
+            frame_gpu.upload(frame)
             
+            gray_gpu = cv2.cuda.cvtColor(frame_gpu, cv2.COLOR_BGR2GRAY)
+            blur_gpu = gaussian_filter.apply(gray_gpu)
             
-            else:
-                pred, t_inf, t_nms = execute_prediction(model, img1, img2, device, conf_thres, iou_thres)
+            # add processed GpuMat objects to the buffer
+            frame_buffer.append((frame_gpu, blur_gpu))
+            t_read_buffer.append(t_read)
+            
+            # wait for buffer to fill to five frames
+            if len(frame_buffer) < 5:
+                continue
+                
+            target_frame_idx = frame_count - 2
+            target_t_read = t_read_buffer[2]
+            
+            # load Labels (extract dimensions from GpuMat object)
+            w0, h0 = frame_buffer[2][0].size()
+            label_path = label_dir / f"{video_name}_{target_frame_idx:04d}.txt"
+            labels, true_class_indices = load_labels(label_path, h0, w0)
+            
+            if len(labels) == 0:
+                continue  # skip empty frames
+            
+            # preprocessing
+            target_frame_gpu = frame_buffer[2][0]
+            blur_frames_gpu = (frame_buffer[0][1], frame_buffer[2][1], frame_buffer[4][1])
+            img1_cpu, img2_cpu, (h0, w0), t_mask, t_prep = compute_mask_and_preprocess_cuda(target_frame_gpu,
+                                                                                            blur_frames_gpu,
+                                                                                            imgsz,
+                                                                                            stride,
+                                                                                            lk_solver)            
+            img1 = img1_cpu.to(device, non_blocking = True)
+            img1 = img1.half() if half else img1.float()
+            img1 /= 255.0
+            
+            img2 = img2_cpu.to(device, non_blocking = True)
+            img2 = img2.half() if half else img2.float()
+            img2 /= 255.0
+
+            # transfer labels to GPU
+            labels = labels.to(device, non_blocking = True)
+
+            # execute prediction and record timings
+            pred, inf_start_evt, inf_end_evt, nms_end_evt = execute_prediction(model, img1, img2, device, conf_thres, iou_thres)
+            
+            # synchronise the pipeline timings
+            nms_end_evt.synchronize()
+            
+            # compute GPU kernel times
+            t_inf = inf_start_evt.elapsed_time(inf_end_evt) / 1000.0
+            t_nms = inf_end_evt.elapsed_time(nms_end_evt) / 1000.0
 
             # compute pipeline throughput time for this frame
             current_time = time.time()
@@ -795,13 +681,12 @@ def run_inference_directory(video_dir,
             last_frame_end_time = current_time
 
             video_inference_count += 1
-            global_inference_count += 1
             
             # only record frame times after the warmup period, to avoid spoilt averages
             if video_inference_count > warmup_frames:
-                video_timings["read"].append(payload["t_read"])
-                video_timings["mask"].append(payload["t_mask"])
-                video_timings["prep"].append(payload["t_prep"])
+                video_timings["read"].append(target_t_read)
+                video_timings["mask"].append(t_mask)
+                video_timings["prep"].append(t_prep)
                 video_timings["inf"].append(t_inf)
                 video_timings["nms"].append(t_nms)
                 video_timings["total"].append(t_total)
@@ -828,7 +713,7 @@ def run_inference_directory(video_dir,
         # define output directory
         output_dir = Path(__file__).resolve().parent / "inference_results"
         output_dir.mkdir(parents = True, exist_ok = True)
-
+        
         # sanitise the weights path for git tracking/Github uploading
         try:
             # make the weights path relative to project root directory
@@ -881,7 +766,7 @@ if __name__ == "__main__":
     LABEL_DIR = LABELS_TEST_DIR
     WEIGHTS_640 = PROJECT_ROOT / "weights/best_640.pt"
     WEIGHTS_1280 = PROJECT_ROOT / "weights/best_1280.pt"
-
+    
     # FOR TESTING THIS INFERENCE PIPELINE WITH JUST A SINGLE VIDEO
     TEST_VIDEOS_DIR_MINIMUM = TEST_VIDEOS_DIR_MINIMUM
 

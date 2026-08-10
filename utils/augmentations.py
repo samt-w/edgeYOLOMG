@@ -126,6 +126,47 @@ def letterbox(im, new_shape=(640, 640), color=(114, 114, 114), auto=True, scaleF
     im = cv2.copyMakeBorder(im, top, bottom, left, right, cv2.BORDER_CONSTANT, value=color)  # add border
     return im, ratio, (dw, dh)
 
+def letterbox_cuda(im_gpu, new_shape=(640, 640), color=(114, 114, 114), auto=True, scaleFill=False, scaleup=True, stride=32):
+    # Resize and pad image while meeting stride-multiple constraints
+    # the im_gpu input must be a cv2.cuda_GpuMat object
+    # cv2.cuda_GpuMat.size() returns (width, height)
+    w, h = im_gpu.size()
+    shape = (h, w)  # current shape [height, width]
+
+    if isinstance(new_shape, int):
+        new_shape = (new_shape, new_shape)
+    
+    # Scale ratio (new / old)
+    r = min(new_shape[0] / shape[0], new_shape[1] / shape[1])
+
+    if not scaleup:  # only scale down, do not scale up (for better val mAP)
+        r = min(r, 1.0)
+
+    # Compute padding
+    ratio = r, r  # width, height ratios
+    new_unpad = int(round(shape[1] * r)), int(round(shape[0] * r))
+    dw, dh = new_shape[1] - new_unpad[0], new_shape[0] - new_unpad[1]  # wh padding
+
+    if auto:  # minimum rectangle
+        dw, dh = np.mod(dw, stride), np.mod(dh, stride)  # wh padding
+    # if scaleFill is true, no padding is applied
+    elif scaleFill:  # stretch
+        dw, dh = 0.0, 0.0
+        new_unpad = (new_shape[1], new_shape[0])
+        ratio = new_shape[1] / shape[1], new_shape[0] / shape[0]  # width, height ratios
+    # compute padding size
+    dw /= 2  # divide padding into 2 sides
+    dh /= 2
+
+    if shape[::-1] != new_unpad:  # resize
+        im_gpu = cv2.cuda.resize(im_gpu, new_unpad, interpolation=cv2.INTER_LINEAR)
+    # compute which sides should be padded
+    top, bottom = int(round(dh - 0.1)), int(round(dh + 0.1))
+    left, right = int(round(dw - 0.1)), int(round(dw + 0.1))
+    # perform padding
+    im_gpu = cv2.cuda.copyMakeBorder(im_gpu, top, bottom, left, right, cv2.BORDER_CONSTANT, value=color)
+    return im_gpu, ratio, (dw, dh)
+
 #随机透视变换
 def random_perspective(im,im2, targets=(), segments=(), degrees=10, translate=.1, scale=.1, shear=10, perspective=0.0,
                        border=(0, 0)):
