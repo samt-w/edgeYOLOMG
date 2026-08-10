@@ -13,11 +13,11 @@ import torch
 import torch.nn as nn
 from torch.utils.mobile_optimizer import optimize_for_mobile
 
+# add repo root filepath dynamically to import modules from other directories
 FILE = Path(__file__).resolve()
-ROOT = FILE.parents[0]  # YOLOv5 root directory
+ROOT = FILE.parents[1]
 if str(ROOT) not in sys.path:
-    sys.path.append(str(ROOT))  # add ROOT to PATH
-ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
+    sys.path.append(str(ROOT))
 
 from models.common import Conv
 from models.experimental import attempt_load
@@ -166,7 +166,7 @@ def export_engine(model, im, file, train, half, simplify, workspace=4, verbose=F
         onnx = file.with_suffix('.onnx')
 
         LOGGER.info(f'\n{prefix} starting export with TensorRT {trt.__version__}...')
-        assert im.device.type != 'cpu', 'export running on CPU but must be on GPU, i.e. `python export.py --device 0`'
+        assert im[0].device.type != 'cpu', 'export running on CPU but must be on GPU, i.e. `python export.py --device 0`'
         assert onnx.exists(), f'failed to export ONNX file: {onnx}'
         f = file.with_suffix('.engine')  # TensorRT engine file
         logger = trt.Logger(trt.Logger.INFO)
@@ -175,8 +175,11 @@ def export_engine(model, im, file, train, half, simplify, workspace=4, verbose=F
 
         builder = trt.Builder(logger)
         config = builder.create_builder_config()
-        config.max_workspace_size = workspace * 1 << 30
-        # config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, workspace << 30)  # fix TRT 8.4 deprecation notice
+        # TensorRT 10 compatibility for workspace allocation
+        if int(trt.__version__.split('.')[0]) >= 10:
+            config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, workspace * 1 << 30)
+        else:
+            config.max_workspace_size = workspace * 1 << 30
 
         flag = (1 << int(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH))
         network = builder.create_network(flag)
@@ -195,8 +198,14 @@ def export_engine(model, im, file, train, half, simplify, workspace=4, verbose=F
         LOGGER.info(f'{prefix} building FP{16 if builder.platform_has_fast_fp16 else 32} engine in {f}')
         if builder.platform_has_fast_fp16:
             config.set_flag(trt.BuilderFlag.FP16)
-        with builder.build_engine(network, config) as engine, open(f, 'wb') as t:
-            t.write(engine.serialize())
+        # TensorRT 10 compatibility for engine serialisation
+        if int(trt.__version__.split('.')[0]) >= 10:
+            engine_bytes = builder.build_serialized_network(network, config)
+            with open(f, 'wb') as t:
+                t.write(engine_bytes)
+        else:
+            with builder.build_engine(network, config) as engine, open(f, 'wb') as t:
+                t.write(engine.serialize())
         LOGGER.info(f'{prefix} export success, saved as {f} ({file_size(f):.1f} MB)')
         return f
     except Exception as e:
@@ -401,7 +410,18 @@ def run(data=ROOT / 'data/coco128.yaml',  # 'dataset.yaml path'
     # Load PyTorch model
     device = select_device(device)
     assert not (device.type == 'cpu' and half), '--half only compatible with GPU export, i.e. use --device 0'
-    model = attempt_load(weights, map_location=device, inplace=True, fuse=True)  # load FP32 model
+    
+    # load and fuse the model on the CPU to prevent OOM errors
+    model = attempt_load(weights, map_location='cpu', inplace=True, fuse=True)  
+    
+    # transfer the model to the GPU
+    model.to(device) 
+    
+    # clean system RAM before TensorRT compilation
+    import gc
+    gc.collect()
+    torch.cuda.empty_cache()
+
     nc, names = model.nc, model.names  # number of classes, class names
 
     # Checks
@@ -430,6 +450,7 @@ def run(data=ROOT / 'data/coco128.yaml',  # 'dataset.yaml path'
         elif isinstance(m, Detect):
             m.inplace = inplace
             m.onnx_dynamic = dynamic
+            m.export = True
             if hasattr(m, 'forward_export'):
                 m.forward = m.forward_export  # assign custom forward (optional)
 

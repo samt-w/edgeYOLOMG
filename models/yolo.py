@@ -69,7 +69,7 @@ class Detect(nn.Module):
                 z.append(y.view(bs, -1, self.no))
                 #logits_.append(logits.view(bs, -1, self.no - 5))  # 修改---3
                 #(torch.cat(z, 1), torch.cat(logits_, 1), x)
-        return x if self.training else (torch.cat(z, 1), x) #返回预测框坐标、得分和分类
+        return x if self.training else (torch.cat(z, 1) if getattr(self, 'export', False) else (torch.cat(z, 1), x)) #返回预测框坐标、得分和分类
 
 #划分单元网格
     def _make_grid(self, nx=20, ny=20, i=0):
