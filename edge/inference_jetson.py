@@ -94,7 +94,7 @@ def compute_mask_and_preprocess_cuda(target_frame_gpu, blur_frames_gpu, imgsz, s
 
     return img1, img2, (h0, w0), t_mask, t_prep
 
-def load_model_and_device(weights, device_id, imgsz):
+def load_model_and_device(weights, device_id, imgsz, data_yaml):
     """
     Initialises the device and loads model weights
     
@@ -102,6 +102,7 @@ def load_model_and_device(weights, device_id, imgsz):
         weights: path to the trained model weights (.pt file)
         device_id: device to use for inference (e.g., "0" for CUDA GPU 0)
         imgsz: inference image size
+        data_yaml: the .yaml dataset file used to train the model (required for class labels)
         
     Returns a tuple with the loaded model, device object, boolean for FP16 precision,
     model stride, verified image size, and list of class names.
@@ -109,7 +110,7 @@ def load_model_and_device(weights, device_id, imgsz):
     device = select_device(device_id)
     half = device.type != "cpu" # use half precision (FP16) only if using a GPU
     
-    model = DetectMultiBackend(weights, device=device, fp16=half)
+    model = DetectMultiBackend(weights, device = device, fp16 = half, data = data_yaml)
     
     stride = int(model.stride)
     imgsz = check_img_size(imgsz, s = stride) # ensure image size is a multiple of the max stride
@@ -138,8 +139,7 @@ def warmup_model(model,
         dummy_img = torch.zeros(1, 3, imgsz, imgsz).to(device)
         dummy_img = dummy_img.half() if half else dummy_img.float()
         for _ in range(warmup_iterations):
-            # DetectMultiBackend requires inputs as tuple
-            model((dummy_img, dummy_img))
+            model(dummy_img, dummy_img)
 
 def execute_prediction(model,
                        img1,
@@ -525,6 +525,7 @@ def run_inference_directory(video_dir,
                             weights,
                             imgsz,
                             device_id,
+                            data_yaml,
                             conf_thres = 0.001,
                             iou_thres = 0.4,
                             warmup_frames = 30):
@@ -542,6 +543,7 @@ def run_inference_directory(video_dir,
         weights: path to model .pt weights
         imgsz: image size
         device_id: hardware device ID (e.g. "0" for GPU)
+        data_yaml: the .yaml dataset file used to train the model (required for class labels)
         conf_thres: object confidence threshold (default is the standard mAP 0.001)
         iou_thres: IoU threshold (default is the standard NMS 0.4)
         warmup_frames: number of frames to ignore in latency calculations (default is 30)
@@ -563,7 +565,7 @@ def run_inference_directory(video_dir,
     
     # initialise model
     print(f"Loading weights from {weights}...")
-    model, device, half, stride, imgsz, names = load_model_and_device(weights, device_id, imgsz)
+    model, device, half, stride, imgsz, names = load_model_and_device(weights, device_id, imgsz, data_yaml)
     
     print("Warming up CUDA context...")
     warmup_model(model, device, half, imgsz, warmup_iterations = 3)
@@ -766,17 +768,26 @@ def run_inference_directory(video_dir,
 if __name__ == "__main__":
     TEST_VIDEOS_DIR = TEST_VIDEOS_DIR
     LABEL_DIR = LABELS_TEST_DIR
-    WEIGHTS_640 = PROJECT_ROOT / "weights/best_640.pt"
-    WEIGHTS_1280 = PROJECT_ROOT / "weights/best_1280.pt"
-    
     # FOR TESTING THIS INFERENCE PIPELINE WITH JUST A SINGLE VIDEO
     TEST_VIDEOS_DIR_MINIMUM = TEST_VIDEOS_DIR_MINIMUM
 
+    # dataset .yaml file (required for class labels for TensorRT engine)
+    # if 640px and 1280px trained on same dataset, can just use one of their .yaml files
+    DATA_YAML = PROJECT_ROOT / "data/ARD100_640.yaml"
+    
+    # legacy .pt weights - not suitable for running on Jetson
+    PYTORCH_WEIGHTS_640 = PROJECT_ROOT / "weights/best_640.pt"
+    PYTORCH_WEIGHTS_1280 = PROJECT_ROOT / "weights/best_1280.pt"
+
+    # TensorRT engine files compiled from .pt weights
+    TENSORRT_WEIGHTS_640 = PROJECT_ROOT / "weights/best_640.engine"
+
     run_inference_directory(video_dir = TEST_VIDEOS_DIR_MINIMUM,
                             label_dir = LABEL_DIR,
-                            weights = WEIGHTS_1280,
-                            imgsz = 1280,
+                            weights = TENSORRT_WEIGHTS_640,
+                            imgsz = 640, # MUST MATCH COMPILED WEIGHTS/ENGINE IMAGE SIZE
                             device_id = "0",
+                            data_yaml = DATA_YAML,
                             conf_thres = 0.001,
                             iou_thres = 0.4,
                             warmup_frames = 30)
