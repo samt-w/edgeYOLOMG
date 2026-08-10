@@ -86,9 +86,19 @@ colors = Colors()  # create instance for 'from utils.plots import colors'
 
 
 def check_pil_font(font=FONT, size=10):
-    # Return a PIL TrueType Font, downloading to CONFIG_DIR if necessary
+    # Return a PIL TrueType Font, checking local utils folder first
     font = Path(font)
-    font = font if font.exists() else (CONFIG_DIR / font.name)
+    
+    # Check if the font exists locally inside the utils/ directory
+    local_utils_font = Path(__file__).resolve().parent / font.name
+    
+    if font.exists():
+        pass
+    elif local_utils_font.exists():
+        font = local_utils_font
+    else:
+        font = CONFIG_DIR / font.name
+
     try:
         return ImageFont.truetype(str(font) if font.exists() else font.name, size)
     except Exception:  # download if missing
