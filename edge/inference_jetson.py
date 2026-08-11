@@ -514,8 +514,6 @@ class VideoReader:
 def gpu_pipeline_worker(input_queue,
                         output_queue,
                         model,
-                        lk_solver,
-                        gaussian_filter,
                         imgsz,
                         stride,
                         half,
@@ -529,8 +527,6 @@ def gpu_pipeline_worker(input_queue,
         input_queue: Queue object providing raw frames and read times from the camera
         output_queue: Queue object where processed tensors and events are placed for the CPU
         model: the loaded TensorRT model
-        lk_solver: the global cv2.cuda.SparsePyrLKOpticalFlow object
-        gaussian_filter: the global cv2.cuda.Filter object for blurring
         imgsz: target image inference size
         stride: model's maximum stride
         half: specifying whether the data should be FP16
@@ -539,14 +535,19 @@ def gpu_pipeline_worker(input_queue,
     Function is non-fruitful, just runs continuously until a None object is received 
     from the input queue
     """
+    # initialise CUDA OpenCV objects locally within the thread to avoid
+    # context-sharing clashes between CUDA streams
+    lk_solver = cv2.cuda.SparsePyrLKOpticalFlow.create(winSize = (15, 15), maxLevel = 3)
+    gaussian_filter = cv2.cuda.createGaussianFilter(cv2.CV_8UC1, cv2.CV_8UC1, (11, 11), 0)
+    
+    # initialise a CUDA stream for this background thread
+    worker_stream = torch.cuda.Stream(device)
+    
     # initialise buffers and state variables
     buffer = deque(maxlen = 5)
     t_read_buffer = deque(maxlen = 5)
     ones_gpu = None
     frame_count = 0
-
-    # initialise a CUDA stream for this background thread
-    worker_stream = torch.cuda.Stream(device)
     
     while True:
         # pull next frame data from queue
