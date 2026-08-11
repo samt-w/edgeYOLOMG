@@ -885,8 +885,8 @@ if __name__ == "__main__":
 
     run_inference_directory(video_dir = TEST_VIDEOS_DIR_MINIMUM,
                             label_dir = LABEL_DIR,
-                            weights = TENSORRT_WEIGHTS_1280,
-                            imgsz = 1280, # MUST MATCH COMPILED WEIGHTS/ENGINE IMAGE SIZE
+                            weights = TENSORRT_WEIGHTS_640,
+                            imgsz = 640, # MUST MATCH COMPILED WEIGHTS/ENGINE IMAGE SIZE
                             device_id = "0",
                             data_yaml = DATA_YAML,
                             conf_thres = 0.001,
