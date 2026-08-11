@@ -487,6 +487,7 @@ class VideoReader:
             if not ret:
                 # terminate the looping thread
                 self.stopped = True
+                self.framequeue.put(None)
                 return
 
             # add the frame and the read time to the back of the queue
@@ -692,11 +693,6 @@ def run_inference_directory(video_dir,
     print("Warming up CUDA context...")
     warmup_model(model, device, half, imgsz, warmup_iterations = 3)
     
-    # initialise the CUDA Lucas-Kinade Solver globally
-    lk_solver = cv2.cuda.SparsePyrLKOpticalFlow.create(winSize = (15, 15), maxLevel = 3)
-    gaussian_filter = cv2.cuda.createGaussianFilter(cv2.CV_8UC1, cv2.CV_8UC1, (11, 11), 0)
-
-    
     # initialise array for mAP50:90 calculation
     iou_vector = torch.linspace(0.5, 0.95, 10, device = device)
     iou_num = iou_vector.numel()
@@ -726,8 +722,6 @@ def run_inference_directory(video_dir,
                             args = (cap.framequeue,
                                     eval_queue,
                                     model,
-                                    lk_solver,
-                                    gaussian_filter,
                                     imgsz,
                                     stride,
                                     half,
@@ -775,6 +769,8 @@ def run_inference_directory(video_dir,
                 # loudly skip empty frames
                 print(f"Warning: No labels found for frame {payload['frame_idx']:04d}. Skipping frame.")
                 continue
+            # transfer labels to GPU for IoU computation
+            labels = labels.to(device)
             
             # conduct non-maximum suppression
             nms_start = time.time()
