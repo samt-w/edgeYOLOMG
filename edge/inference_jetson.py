@@ -623,6 +623,7 @@ def run_inference_directory(video_dir,
         last_frame_end_time = time.time()
 
         # initialise empty object (will become GpuMat object for homography masking)
+        ones_gpu = None
         
         while True:
             ret, frame, t_read = cap.read()
@@ -647,8 +648,6 @@ def run_inference_directory(video_dir,
             # convert each frame to GpuMat object
             frame_gpu = cv2.cuda_GpuMat()
             frame_gpu.upload(frame)
-                        
-
 
             # downscale the RGB frame 
             frame_resized_gpu = cv2.cuda.resize(frame_gpu, (new_w, new_h), interpolation=cv2.INTER_LINEAR)

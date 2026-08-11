@@ -375,7 +375,7 @@ def motion_compensate(frame1, frame2):
     return compensated, mask, avg_dst, motion_x, motion_y, homography_matrix
 
 
-def motion_compensate_cuda(frame1_gpu, frame2_gpu, lk_solver):
+def motion_compensate_cuda(frame1_gpu, frame2_gpu, lk_solver, ones_gpu):
     """
     This function transforms frame1 so that frame1 matches the camera position of frame2
 
@@ -454,7 +454,7 @@ def motion_compensate_cuda(frame1_gpu, frame2_gpu, lk_solver):
     # if fewer than 15 valid points, just use identity matrix as not enough data
     # otherwise, use the RANSAC algorithm to compute the transformation matrix
     if len(good_old) < 15:
-        homography_matrix = np.array([[0.999, 0, 0], [0, 0.999, 0], [0, 0, 1]])
+        homography_matrix = np.array([[0.999, 0, 0], [0, 0.999, 0], [0, 0, 1]], dtype=np.float32)
     else:
         homography_matrix, _ = cv2.findHomography(good_new, good_old, cv2.RANSAC, 3.0)
         # ensure any RANSAC failures are caught
@@ -468,9 +468,6 @@ def motion_compensate_cuda(frame1_gpu, frame2_gpu, lk_solver):
     # AMENDMENT TO ORIGINAL CODE:
     # instead of computing inverse matrix, just warp a uniform matrix using the transformation matrix
     # invalid pixels get marked as 0, and then get inverted using .bitwise_not() to match original logic
-    ones = np.full((height, width), 255, dtype = np.uint8)
-    ones_gpu = cv2.cuda_GpuMat()
-    ones_gpu.upload(ones)
     warped_ones_gpu = cv2.cuda.warpPerspective(ones_gpu, homography_matrix, (width, height), flags=cv2.INTER_LINEAR + cv2.WARP_INVERSE_MAP)
     mask_gpu = cv2.cuda.bitwise_not(warped_ones_gpu)
 
