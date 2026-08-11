@@ -35,11 +35,11 @@ from utils.general import check_img_size, non_max_suppression, xywhn2xyxy, scale
 from utils.torch_utils import select_device
 from models.common import DetectMultiBackend
 
-def compute_mask_and_preprocess_cuda(target_frame_gpu, blur_frames_gpu, imgsz, stride, lk_solver):
+def compute_mask_and_preprocess_cuda(target_frame_gpu, blur_frames_gpu, imgsz, stride, lk_solver, original_dims, ones_gpu):
     """
     This function computes ego motion compensation (using Lucas-Kanade), a motion 
     mask, and letterboxing for three sequential frames (which have previously
-    been blurred and grescaled)
+    been resized, blurred and grescaled)
 
     Args:
         target_frame_gpu: the raw BGR current frame as a cv2.cuda_GpuMat
@@ -47,6 +47,8 @@ def compute_mask_and_preprocess_cuda(target_frame_gpu, blur_frames_gpu, imgsz, s
         imgsz: target image inference size
         stride: model's maximum stride (for padding calculation)
         lk_solver: the global cv2.cuda.SparsePyrLKOpticalFlow object
+        original_dims: the original dimensions of the image
+        ones_gpu: a uniform matrix as a GpuMat object used for homography
         
     Returns a tuple (img1, img2, (h0, w0), t_mask, t_prep) where img1 is the processed target frame 
     tensor, img2 is the motion mask tensor, (h0, w0) is the original image height and width, and t_mask 
@@ -57,8 +59,8 @@ def compute_mask_and_preprocess_cuda(target_frame_gpu, blur_frames_gpu, imgsz, s
     blur1_gpu, blur_target_gpu, blur2_gpu = blur_frames_gpu
 
     # compute motion compensation and differences
-    comp1_gpu, _, _, _, _, _ = motion_compensate_cuda(blur1_gpu, blur_target_gpu, lk_solver)
-    comp2_gpu, _, _, _, _, _ = motion_compensate_cuda(blur2_gpu, blur_target_gpu, lk_solver)
+    comp1_gpu, _, _, _, _, _ = motion_compensate_cuda(blur1_gpu, blur_target_gpu, lk_solver, ones_gpu)
+    comp2_gpu, _, _, _, _, _ = motion_compensate_cuda(blur2_gpu, blur_target_gpu, lk_solver, ones_gpu)
     frameDiff1 = cv2.cuda.absdiff(blur_target_gpu, comp1_gpu)
     frameDiff2 = cv2.cuda.absdiff(blur_target_gpu, comp2_gpu)
 
@@ -75,7 +77,8 @@ def compute_mask_and_preprocess_cuda(target_frame_gpu, blur_frames_gpu, imgsz, s
     target_img_gpu = letterbox_cuda(target_frame_gpu, new_shape = (imgsz, imgsz), color = (114, 114, 114), stride = stride, auto=False)[0]
     mask_img_gpu = letterbox_cuda(frameDiff_3d, new_shape = (imgsz, imgsz), color = (0, 0, 0), stride = stride, auto=False)[0]
     
-    w0, h0 = target_frame_gpu.size()
+    # retrieve dimensions for passing onwards
+    h0, w0 = original_dims
 
     # send frames to CPU for conversion to PyTorch
     target_cpu = target_img_gpu.download()
@@ -617,7 +620,9 @@ def run_inference_directory(video_dir,
         print(f"Starting inference evaluation for {video_name}...")
         
         # record start time of first frame
-        last_frame_end_time = time.time() 
+        last_frame_end_time = time.time()
+
+        # initialise empty object (will become GpuMat object for homography masking)
         
         while True:
             ret, frame, t_read = cap.read()
@@ -625,15 +630,35 @@ def run_inference_directory(video_dir,
                 break
                 
             frame_count += 1
-            # convert each frame to GpuMat object and blur
+            # extract original image dimensions for downsampling
+            w0, h0 = frame.shape[1], frame.shape[0]
+
+            # compute scale to make the longest edge equal to imgsz
+            scale = imgsz / max(w0, h0)
+            new_w, new_h = int(w0 * scale), int(h0 * scale)
+
+            # initialise homography mask - doing it here so it is done just
+            # once per video
+            if ones_gpu is None:
+                ones = np.full((new_h, new_w), 255, dtype = np.uint8)
+                ones_gpu = cv2.cuda_GpuMat()
+                ones_gpu.upload(ones)
+
+            # convert each frame to GpuMat object
             frame_gpu = cv2.cuda_GpuMat()
             frame_gpu.upload(frame)
+                        
+
+
+            # downscale the RGB frame 
+            frame_resized_gpu = cv2.cuda.resize(frame_gpu, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
             
-            gray_gpu = cv2.cuda.cvtColor(frame_gpu, cv2.COLOR_BGR2GRAY)
+            # Apply greyscaling and blur to the downscaled frame            
+            gray_gpu = cv2.cuda.cvtColor(frame_resized_gpu, cv2.COLOR_BGR2GRAY)
             blur_gpu = gaussian_filter.apply(gray_gpu)
             
-            # add processed GpuMat objects to the buffer
-            frame_buffer.append((frame_gpu, blur_gpu))
+            # add processed GpuMat objects and their original dimensions to the buffer
+            frame_buffer.append((frame_resized_gpu, blur_gpu, w0, h0))
             t_read_buffer.append(t_read)
             
             # wait for buffer to fill to five frames
@@ -643,10 +668,11 @@ def run_inference_directory(video_dir,
             target_frame_idx = frame_count - 2
             target_t_read = t_read_buffer[2]
             
-            # load Labels (extract dimensions from GpuMat object)
-            w0, h0 = frame_buffer[2][0].size()
+            # load Labels (extract original image dimensions from buffer)
+            target_w0 = frame_buffer[2][2]
+            target_h0 = frame_buffer[2][3]
             label_path = label_dir / f"{video_name}_{target_frame_idx:04d}.txt"
-            labels, true_class_indices = load_labels(label_path, h0, w0)
+            labels, true_class_indices = load_labels(label_path, target_h0, target_w0)
             
             if len(labels) == 0:
                 # loudly skip empty frames
@@ -656,11 +682,15 @@ def run_inference_directory(video_dir,
             # preprocessing
             target_frame_gpu = frame_buffer[2][0]
             blur_frames_gpu = (frame_buffer[0][1], frame_buffer[2][1], frame_buffer[4][1])
+            original_dims = (target_h0, target_w0)
+
             img1_cpu, img2_cpu, (h0, w0), t_mask, t_prep = compute_mask_and_preprocess_cuda(target_frame_gpu,
                                                                                             blur_frames_gpu,
                                                                                             imgsz,
                                                                                             stride,
-                                                                                            lk_solver)            
+                                                                                            lk_solver,
+                                                                                            original_dims,
+                                                                                            ones_gpu)            
             img1 = img1_cpu.to(device, non_blocking = True)
             img1 = img1.half() if half else img1.float()
             img1 /= 255.0
@@ -783,8 +813,8 @@ if __name__ == "__main__":
     # PYTORCH_WEIGHTS_1280 = PROJECT_ROOT / "weights/best_1280.pt"
 
     # TensorRT engine files compiled from .pt weights
-    TENSORRT_WEIGHTS_640 = PROJECT_ROOT / "weights/best_640.engine"
-    TENSORRT_WEIGHTS_1280 = PROJECT_ROOT / "weights/best_1280.engine"
+    TENSORRT_WEIGHTS_640 = PROJECT_ROOT / "weights/best_640_jetpack_6-2-3.engine"
+    TENSORRT_WEIGHTS_1280 = PROJECT_ROOT / "weights/best_1280_jetpack_6-2-3.engine"
 
     run_inference_directory(video_dir = TEST_VIDEOS_DIR_MINIMUM,
                             label_dir = LABEL_DIR,
