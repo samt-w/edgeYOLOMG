@@ -737,9 +737,6 @@ def run_inference_directory(video_dir,
         # record start time of first frame
         last_frame_end_time = time.time()
 
-        # initialise a dedicated stream for NMS measurement
-        nms_stream = torch.cuda.Stream(device)
-
         # initialise CPU consumer thread
         while True:
             payload = eval_queue.get()
@@ -771,12 +768,8 @@ def run_inference_directory(video_dir,
             # conduct non-maximum suppression
             nms_start = time.time()
 
-            with torch.cuda.stream(nms_stream):
-                # execute prediction on the dedicated stream so it bypasses OpenCV traffic
-                pred_nms = non_max_suppression(payload["pred"], conf_thres, iou_thres)[0]
-            
-            # wait for NMS to finish before stopping the clock
-            nms_stream.synchronize()
+            # execute prediction and record timings
+            pred_nms = non_max_suppression(payload["pred"], conf_thres, iou_thres)[0]            
             t_nms = time.time() - nms_start
 
             # compute pipeline throughput time for this frame
