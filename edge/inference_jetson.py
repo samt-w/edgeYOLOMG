@@ -112,7 +112,8 @@ def load_model_and_device(weights, device_id, imgsz, data_yaml):
     model stride, verified image size, and list of class names.
     """
     device = select_device(device_id)
-    half = device.type != "cpu" # use half precision (FP16) only if using a GPU
+    # half = device.type != "cpu" # use half precision (FP16) only if using a GPU
+    half = False # force FP32 to test mixed precision .engine file
     
     model = DetectMultiBackend(weights, device = device, fp16 = half, data = data_yaml)
     
@@ -882,11 +883,22 @@ if __name__ == "__main__":
     # TensorRT engine files compiled from .pt weights
     TENSORRT_WEIGHTS_640 = PROJECT_ROOT / "weights/best_640_jetpack_6-2-3.engine"
     TENSORRT_WEIGHTS_1280 = PROJECT_ROOT / "weights/best_1280_jetpack_6-2-3.engine"
+    TENSORRT_WEIGHTS_640_MIXED_PRECISION = PROJECT_ROOT / "weights/best_640_jetpack_6-2-3_mixedprecision.engine"
 
     run_inference_directory(video_dir = TEST_VIDEOS_DIR_MINIMUM,
                             label_dir = LABEL_DIR,
                             weights = TENSORRT_WEIGHTS_640,
                             imgsz = 640, # MUST MATCH COMPILED WEIGHTS/ENGINE IMAGE SIZE
+                            device_id = "0",
+                            data_yaml = DATA_YAML,
+                            conf_thres = 0.001,
+                            iou_thres = 0.4,
+                            warmup_frames = 30)
+    
+    run_inference_directory(video_dir = TEST_VIDEOS_DIR_MINIMUM,
+                            label_dir = LABEL_DIR,
+                            weights = TENSORRT_WEIGHTS_1280,
+                            imgsz = 1280, # MUST MATCH COMPILED WEIGHTS/ENGINE IMAGE SIZE
                             device_id = "0",
                             data_yaml = DATA_YAML,
                             conf_thres = 0.001,
