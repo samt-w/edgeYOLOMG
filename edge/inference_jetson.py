@@ -440,6 +440,19 @@ def calculate_metrics(timings,
     
     print(f"Results appended to {csv_file.resolve()}")
 
+    # append overall summary data at end of video to master .csv document
+    if run_config["video_name"] == "OVERALL_SUMMARY":
+        master_csv_file = output_dir.parent / "YOLOMG-Inference-Runs_optimisation-results.csv"
+        master_exists = master_csv_file.is_file()
+        
+        with open(master_csv_file, mode="a", newline="") as f:
+            writer = csv.writer(f)
+            if not master_exists:
+                writer.writerow(headers)
+            writer.writerow(row_data)
+            
+        print(f"Overall summary appended to {master_csv_file.resolve()}")
+
 # initialise reader class to queue frames for GPU
 class VideoReader:
     def __init__(self, video_filepath, queue_size = 30):
