@@ -550,104 +550,111 @@ def gpu_pipeline_worker(input_queue,
     Function is non-fruitful, just runs continuously until a None object is received 
     from the input queue
     """
-    # initialise CUDA OpenCV objects locally within the thread to avoid
-    # context-sharing clashes between CUDA streams
-    lk_solver = cv2.cuda.SparsePyrLKOpticalFlow.create(winSize = (15, 15), maxLevel = 3)
-    gaussian_filter = cv2.cuda.createGaussianFilter(cv2.CV_8UC1, cv2.CV_8UC1, (11, 11), 0)
-    
-    # initialise a CUDA stream for this background thread
-    worker_stream = torch.cuda.Stream(device)
-    
-    # initialise buffers and state variables
-    buffer = deque(maxlen = 5)
-    t_read_buffer = deque(maxlen = 5)
-    ones_gpu = None
-    frame_count = 0
-    
-    while True:
-        # pull next frame data from queue
-        item = input_queue.get()
+    try:
+        # initialise CUDA OpenCV objects locally within the thread to avoid
+        # context-sharing clashes between CUDA streams
+        lk_solver = cv2.cuda.SparsePyrLKOpticalFlow.create(winSize = (15, 15), maxLevel = 3)
+        gaussian_filter = cv2.cuda.createGaussianFilter(cv2.CV_8UC1, cv2.CV_8UC1, (11, 11), 0)
         
-        # if next item is None, video is finished
-        if item is None:
-            output_queue.put(None)
-            break
+        # initialise a CUDA stream for this background thread
+        worker_stream = torch.cuda.Stream(device)
+        
+        # initialise buffers and state variables
+        buffer = deque(maxlen = 5)
+        t_read_buffer = deque(maxlen = 5)
+        ones_gpu = None
+        frame_count = 0
+        
+        while True:
+            # pull next frame data from queue
+            item = input_queue.get()
             
-        # unpack data
-        frame, t_read = item
-        frame_count += 1
-        
-        # extract original image dimensions for downsampling
-        w0, h0 = frame.shape[1], frame.shape[0]
-
-        # initialise homography mask - doing it here so it is done just
-        # once per video
-        if ones_gpu is None:
-            ones = np.full((h0, w0), 255, dtype = np.uint8)
-            ones_gpu = cv2.cuda_GpuMat()
-            ones_gpu.upload(ones)
-
-        # convert each frame to GpuMat object
-        frame_gpu = cv2.cuda_GpuMat()
-        frame_gpu.upload(frame)
-        
-        # apply greyscaling and blur to the original RGB frame            
-        gray_gpu = cv2.cuda.cvtColor(frame_gpu, cv2.COLOR_BGR2GRAY)
-        blur_gpu = gaussian_filter.apply(gray_gpu)
-        
-        # add full resolution GpuMat objects to the buffer
-        buffer.append((frame_gpu, blur_gpu))
-        t_read_buffer.append(t_read)
-        
-        # wait for buffer to fill to five frames
-        if len(buffer) < 5:
-            continue
+            # if next item is None, video is finished
+            if item is None:
+                output_queue.put(None)
+                break
+                
+            # unpack data
+            frame, t_read = item
+            frame_count += 1
             
-        # extract target frame data
-        target_frame_idx = frame_count - 2
-        target_t_read = t_read_buffer[2]
-        
-        # preprocessing
-        target_frame_gpu = buffer[2][0]
-        blur_frames_gpu = (buffer[0][1], buffer[2][1], buffer[4][1])
-        original_dims = (h0, w0)
+            # extract original image dimensions for downsampling
+            w0, h0 = frame.shape[1], frame.shape[0]
 
-        img1_cpu, img2_cpu, _, t_mask, t_prep = compute_mask_and_preprocess_cuda(target_frame_gpu,
-                                                                                 blur_frames_gpu,
-                                                                                 imgsz,
-                                                                                 stride,
-                                                                                 lk_solver,
-                                                                                 original_dims,
-                                                                                 ones_gpu)
-        
-        # enable PyTorch to use the worker stream for memory transfer
-        with torch.cuda.stream(worker_stream):
-            # transfer CPU tensor to GPU
-            img1 = img1_cpu.to(device, non_blocking = True)
-            img1 = img1.half() if half else img1.float()
-            img1 /= 255.0
+            # initialise homography mask - doing it here so it is done just
+            # once per video
+            if ones_gpu is None:
+                ones = np.full((h0, w0), 255, dtype = np.uint8)
+                ones_gpu = cv2.cuda_GpuMat()
+                ones_gpu.upload(ones)
+
+            # convert each frame to GpuMat object
+            frame_gpu = cv2.cuda_GpuMat()
+            frame_gpu.upload(frame)
             
-            img2 = img2_cpu.to(device, non_blocking = True)
-            img2 = img2.half() if half else img2.float()
-            img2 /= 255.0
+            # apply greyscaling and blur to the original RGB frame            
+            gray_gpu = cv2.cuda.cvtColor(frame_gpu, cv2.COLOR_BGR2GRAY)
+            blur_gpu = gaussian_filter.apply(gray_gpu)
+            
+            # add full resolution GpuMat objects to the buffer
+            buffer.append((frame_gpu, blur_gpu))
+            t_read_buffer.append(t_read)
+            
+            # wait for buffer to fill to five frames
+            if len(buffer) < 5:
+                continue
+                
+            # extract target frame data
+            target_frame_idx = frame_count - 2
+            target_t_read = t_read_buffer[2]
+            
+            # preprocessing
+            target_frame_gpu = buffer[2][0]
+            blur_frames_gpu = (buffer[0][1], buffer[2][1], buffer[4][1])
+            original_dims = (h0, w0)
 
-            # execute prediction and record timings
-            pred, inf_start_evt, inf_end_evt = execute_forward_pass(model, img1, img2, device)
-        
-        # package raw tensors and events, push to evaluation queue
-        payload = {
-            "pred": pred,
-            "inf_start_evt": inf_start_evt,
-            "inf_end_evt": inf_end_evt,
-            "frame_idx": target_frame_idx,
-            "w0": w0,
-            "h0": h0,
-            "t_read": target_t_read,
-            "t_mask": t_mask,
-            "t_prep": t_prep,
-            "img_shape": img1.shape[2:]
-        }
-        output_queue.put(payload)
+            img1_cpu, img2_cpu, _, t_mask, t_prep = compute_mask_and_preprocess_cuda(target_frame_gpu,
+                                                                                     blur_frames_gpu,
+                                                                                     imgsz,
+                                                                                     stride,
+                                                                                     lk_solver,
+                                                                                     original_dims,
+                                                                                     ones_gpu)
+            
+            # enable PyTorch to use the worker stream for memory transfer
+            with torch.cuda.stream(worker_stream):
+                # transfer CPU tensor to GPU
+                img1 = img1_cpu.to(device, non_blocking = True)
+                img1 = img1.half() if half else img1.float()
+                img1 /= 255.0
+                
+                img2 = img2_cpu.to(device, non_blocking = True)
+                img2 = img2.half() if half else img2.float()
+                img2 /= 255.0
+
+                # execute prediction and record timings
+                pred, inf_start_evt, inf_end_evt = execute_forward_pass(model, img1, img2, device)
+            
+            # package raw tensors and events, push to evaluation queue
+            payload = {
+                "pred": pred,
+                "inf_start_evt": inf_start_evt,
+                "inf_end_evt": inf_end_evt,
+                "frame_idx": target_frame_idx,
+                "w0": w0,
+                "h0": h0,
+                "t_read": target_t_read,
+                "t_mask": t_mask,
+                "t_prep": t_prep,
+                "img_shape": img1.shape[2:]
+            }
+            output_queue.put(payload)
+
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        output_queue.put(None)   # unblock the consumer instead of hanging it
+        raise
 
 def run_inference_directory(video_dir,
                             label_dir,
