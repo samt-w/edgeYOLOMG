@@ -585,12 +585,15 @@ def gpu_pipeline_worker(input_queue,
         # downscale the RGB frame 
         frame_resized_gpu = cv2.cuda.resize(frame_gpu, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
         
-        # apply greyscaling and blur to the downscaled frame            
-        gray_gpu = cv2.cuda.cvtColor(frame_resized_gpu, cv2.COLOR_BGR2GRAY)
-        blur_gpu = gaussian_filter.apply(gray_gpu)
+        # apply greyscaling and blur to the original RGB frame            
+        gray_gpu = cv2.cuda.cvtColor(frame_gpu, cv2.COLOR_BGR2GRAY)
+        blur_full_gpu = gaussian_filter.apply(gray_gpu)
+
+        # downscale the blurred frame
+        blur_resized_gpu = cv2.cuda.resize(blur_full_gpu, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
         
         # add processed GpuMat objects and their original dimensions to the buffer
-        buffer.append((frame_resized_gpu, blur_gpu, w0, h0))
+        buffer.append((frame_resized_gpu, blur_resized_gpu, w0, h0))
         t_read_buffer.append(t_read)
         
         # wait for buffer to fill to five frames
