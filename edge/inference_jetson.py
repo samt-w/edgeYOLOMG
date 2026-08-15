@@ -112,8 +112,7 @@ def load_model_and_device(weights, device_id, imgsz, data_yaml):
     model stride, verified image size, and list of class names.
     """
     device = select_device(device_id)
-    # half = device.type != "cpu" # use half precision (FP16) only if using a GPU
-    half = False # force FP32 to test mixed precision .engine file
+    half = device.type != "cpu" # use half precision (FP16) only if using a GPU
     
     model = DetectMultiBackend(weights, device = device, fp16 = half, data = data_yaml)
     
