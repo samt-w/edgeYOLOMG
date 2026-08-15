@@ -567,14 +567,10 @@ def gpu_pipeline_worker(input_queue,
         # extract original image dimensions for downsampling
         w0, h0 = frame.shape[1], frame.shape[0]
 
-        # compute scale to make the longest edge equal to imgsz
-        scale = imgsz / max(w0, h0)
-        new_w, new_h = int(w0 * scale), int(h0 * scale)
-
         # initialise homography mask - doing it here so it is done just
         # once per video
         if ones_gpu is None:
-            ones = np.full((new_h, new_w), 255, dtype = np.uint8)
+            ones = np.full((h0, w0), 255, dtype = np.uint8)
             ones_gpu = cv2.cuda_GpuMat()
             ones_gpu.upload(ones)
 
@@ -582,18 +578,12 @@ def gpu_pipeline_worker(input_queue,
         frame_gpu = cv2.cuda_GpuMat()
         frame_gpu.upload(frame)
         
-        # downscale the RGB frame 
-        frame_resized_gpu = cv2.cuda.resize(frame_gpu, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
-        
         # apply greyscaling and blur to the original RGB frame            
         gray_gpu = cv2.cuda.cvtColor(frame_gpu, cv2.COLOR_BGR2GRAY)
-        blur_full_gpu = gaussian_filter.apply(gray_gpu)
-
-        # downscale the blurred frame
-        blur_resized_gpu = cv2.cuda.resize(blur_full_gpu, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+        blur_gpu = gaussian_filter.apply(gray_gpu)
         
-        # add processed GpuMat objects and their original dimensions to the buffer
-        buffer.append((frame_resized_gpu, blur_resized_gpu, w0, h0))
+        # add full resolution GpuMat objects to the buffer
+        buffer.append((frame_gpu, blur_gpu))
         t_read_buffer.append(t_read)
         
         # wait for buffer to fill to five frames
@@ -603,12 +593,11 @@ def gpu_pipeline_worker(input_queue,
         # extract target frame data
         target_frame_idx = frame_count - 2
         target_t_read = t_read_buffer[2]
-        target_w0, target_h0 = buffer[2][2], buffer[2][3]
         
         # preprocessing
         target_frame_gpu = buffer[2][0]
         blur_frames_gpu = (buffer[0][1], buffer[2][1], buffer[4][1])
-        original_dims = (target_h0, target_w0)
+        original_dims = (h0, w0)
 
         img1_cpu, img2_cpu, _, t_mask, t_prep = compute_mask_and_preprocess_cuda(target_frame_gpu,
                                                                                  blur_frames_gpu,
@@ -638,8 +627,8 @@ def gpu_pipeline_worker(input_queue,
             "inf_start_evt": inf_start_evt,
             "inf_end_evt": inf_end_evt,
             "frame_idx": target_frame_idx,
-            "w0": target_w0,
-            "h0": target_h0,
+            "w0": w0,
+            "h0": h0,
             "t_read": target_t_read,
             "t_mask": t_mask,
             "t_prep": t_prep,

@@ -389,13 +389,20 @@ def motion_compensate_cuda(frame1_gpu, frame2_gpu, lk_solver, ones_gpu):
     """
     # cv2.cuda_GpuMat.size() returns (width, height)
     width, height = frame2_gpu.size()
-    # compute filter grid (aiming for approx 600-700 tracking points)
-    grid_numW = 30
-    grid_numH = 22
-    gridSizeW = width / grid_numW
-    gridSizeH = height / grid_numH
+    scale = 2
+    # compute filter grid across the image
+    frame1_grid_gpu = cv2.cuda.resize(frame1_gpu, (960 * scale, 540 * scale), interpolation=cv2.INTER_CUBIC)
+    frame2_grid_gpu = cv2.cuda.resize(frame2_gpu, (960 * scale, 540 * scale), interpolation=cv2.INTER_CUBIC)
+
+    width_grid = frame2_grid_gpu.size()[0]
+    height_grid = frame2_grid_gpu.size()[1]
+    
+    gridSizeW = 32 * scale
+    gridSizeH = 24 * scale
 
     p1 = []
+    grid_numW = int(width_grid / gridSizeW - 1)
+    grid_numH = int(height_grid / gridSizeH - 1)
     for i in range(grid_numW):
         for j in range(grid_numH):
             point = (np.float32(i * gridSizeW + gridSizeW / 2.0), np.float32(j * gridSizeH + gridSizeH / 2.0))
@@ -413,7 +420,7 @@ def motion_compensate_cuda(frame1_gpu, frame2_gpu, lk_solver, ones_gpu):
     # COMMENTING OUT ORIGINAL LINE TO PASS OBJECT GLOBALLY
     # lk_solver = cv2.cuda.SparsePyrLKOpticalFlow.create(winSize = (15, 15), maxLevel = 3)
     # -------------------------------
-    pts_cur_gpu, status_gpu, err_gpu = lk_solver.calc(frame1_gpu, frame2_gpu, pts_prev_gpu, None)
+    pts_cur_gpu, status_gpu, err_gpu = lk_solver.calc(frame1_grid_gpu, frame2_grid_gpu, pts_prev_gpu, None)
 
     # convert results to CPU for filtering
     pts_cur = pts_cur_gpu.download()
@@ -430,7 +437,7 @@ def motion_compensate_cuda(frame1_gpu, frame2_gpu, lk_solver, ones_gpu):
 
     # compute Euclidean distance for points. If point moved more than a given
     # threshold (50px for 1920px images), remove it (to avoid tracking errors)
-    dist_thresh = 50.0 * (width / 1920.0)
+    dist_thresh = 50
 
     for new, old in zip(good_new, good_old):
         a, b = new.ravel()
