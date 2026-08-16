@@ -130,7 +130,6 @@ def warmup_model(model,
                  device,
                  half,
                  imgsz,
-                 batch_size,
                  warmup_iterations):
     """
     Run dummy forward passes to initialise CUDA context on GPUs
@@ -140,12 +139,11 @@ def warmup_model(model,
         device: the execution device
         half: specifying whether the data should be FP16
         imgsz: the image size used for inference
-        batch_size: the number of images in each inference batch (must match TensorRT .engine)
         warmup_iterations: number of dummy passes to execute
     """
     if device.type != "cpu":
         # create a dummy tensor
-        dummy_img = torch.zeros(batch_size, 3, imgsz, imgsz, device = device)
+        dummy_img = torch.zeros(1, 3, imgsz, imgsz).to(device)
         dummy_img = dummy_img.half() if half else dummy_img.float()
         for _ in range(warmup_iterations):
             model(dummy_img, dummy_img)
@@ -564,8 +562,7 @@ def gpu_pipeline_worker(input_queue,
                         imgsz,
                         stride,
                         half,
-                        device,
-                        batch_size):
+                        device):
     """
     Background worker thread that handles GPU-bound preprocessing and inference.
     Pulls raw frames from the input queue, applies CUDA optical flow and letterboxing,
@@ -601,49 +598,13 @@ def gpu_pipeline_worker(input_queue,
         pts_prev_cpu = None
         pts_prev_gpu = None
         frame_count = 0
-        # batch frame accumulation buffers
-        batch_img1 = []
-        batch_img2 = []
-        batch_inference_data = []
         
         while True:
             # pull next frame data from queue
             item = input_queue.get()
             
-            # if next item is None, video is finished 
-            # (and need to remove remaining frame, if it exists)
+            # if next item is None, video is finished
             if item is None:
-                # check if a partial batch remains
-                if len(batch_img1) > 0:
-                    valid_items = len(batch_img1)
-                    # pad missing frame slot by duplicating the last frame
-                    while len(batch_img1) < batch_size:
-                        batch_img1.append(batch_img1[-1])
-                        batch_img2.append(batch_img2[-1])
-                    
-                    with torch.cuda.stream(worker_stream):
-                        batched_img1 = torch.cat(batch_img1, dim=0)
-                        batched_img2 = torch.cat(batch_img2, dim=0)
-                        pred, inf_start_evt, inf_end_evt = execute_forward_pass(model, batched_img1, batched_img2, device)
-                    
-                    # only push valid (non-duplicated) predictions to consumer
-                    for i in range(valid_items):
-                        meta = batch_inference_data[i]
-                        payload = {
-                            "pred": pred[i:i+1],
-                            "inf_start_evt": inf_start_evt,
-                            "inf_end_evt": inf_end_evt,
-                            "batch_len": batch_size,
-                            "frame_idx": meta["target_frame_idx"],
-                            "w0": meta["w0"],
-                            "h0": meta["h0"],
-                            "t_read": meta["t_read"],
-                            "t_mask": meta["t_mask"],
-                            "t_prep": meta["t_prep"],
-                            "img_shape": batched_img1.shape[2:]
-                        }
-                        output_queue.put(payload)
-                
                 output_queue.put(None)
                 break
                 
@@ -740,51 +701,26 @@ def gpu_pipeline_worker(input_queue,
                 img2 = img2_torch.contiguous().half() if half else img2_torch.contiguous().float()
                 img2 /= 255.0
 
-            # add frame to batch
-            batch_img1.append(img1)
-            batch_img2.append(img2)
-            batch_inference_data.append({
-                "target_frame_idx": target_frame_idx,
+                # execute prediction and record timings
+                pred, inf_start_evt, inf_end_evt = execute_forward_pass(model, img1, img2, device)
+
+                # copy predictions to avoid them being overwritten by next loop
+                pred = pred.clone()
+            
+            # package raw tensors and events, push to evaluation queue
+            payload = {
+                "pred": pred,
+                "inf_start_evt": inf_start_evt,
+                "inf_end_evt": inf_end_evt,
+                "frame_idx": target_frame_idx,
                 "w0": w0,
                 "h0": h0,
                 "t_read": target_t_read,
                 "t_mask": t_mask,
-                "t_prep": t_prep
-            })
-
-            # when batch capacity is reached, run batched forward pass
-            if len(batch_img1) == batch_size:
-                with torch.cuda.stream(worker_stream):
-                    batched_img1 = torch.cat(batch_img1, dim = 0)
-                    batched_img2 = torch.cat(batch_img2, dim = 0)
-                    pred, inf_start_evt, inf_end_evt = execute_forward_pass(model, batched_img1, batched_img2, device)
-
-                    # clone the predictions tensor so it does not get overwritten by the next batch
-                    pred = pred.clone()
-                
-                # unpack batched predictions to individual queue items
-                for i in range(batch_size):
-                    meta = batch_inference_data[i]
-                
-                    # package raw tensors and events, push to evaluation queue
-                    payload = {
-                        "pred": pred[i:i+1],
-                        "inf_start_evt": inf_start_evt,
-                        "inf_end_evt": inf_end_evt,
-                        "batch_len": batch_size,
-                        "frame_idx": meta["target_frame_idx"],
-                        "w0": meta["w0"],
-                        "h0": meta["h0"],
-                        "t_read": meta["t_read"],
-                        "t_mask": meta["t_mask"],
-                        "t_prep": meta["t_prep"],
-                        "img_shape": batched_img1.shape[2:]
-                    }
-                    output_queue.put(payload)
-                
-                batch_img1.clear()
-                batch_img2.clear()
-                batch_inference_data.clear()
+                "t_prep": t_prep,
+                "img_shape": img1.shape[2:]
+            }
+            output_queue.put(payload)
 
     except Exception:
         import traceback
@@ -798,7 +734,6 @@ def run_inference_directory(video_dir,
                             imgsz,
                             device_id,
                             data_yaml,
-                            batch_size,
                             conf_thres = 0.001,
                             iou_thres = 0.4,
                             warmup_frames = 30):
@@ -817,7 +752,6 @@ def run_inference_directory(video_dir,
         imgsz: image size
         device_id: hardware device ID (e.g. "0" for GPU)
         data_yaml: the .yaml dataset file used to train the model (required for class labels)
-        batch_size: the number of frames in each batch
         conf_thres: object confidence threshold (default is the standard mAP 0.001)
         iou_thres: IoU threshold (default is the standard NMS 0.4)
         warmup_frames: number of frames to ignore in latency calculations (default is 30)
@@ -842,7 +776,7 @@ def run_inference_directory(video_dir,
     model, device, half, stride, imgsz, names = load_model_and_device(weights, device_id, imgsz, data_yaml)
     
     print("Warming up CUDA context...")
-    warmup_model(model, device, half, imgsz, batch_size = batch_size, warmup_iterations = 3)
+    warmup_model(model, device, half, imgsz, warmup_iterations = 3)
     
     # initialise array for mAP50:90 calculation
     iou_vector = torch.linspace(0.5, 0.95, 10, device = device)
@@ -876,8 +810,7 @@ def run_inference_directory(video_dir,
                                     imgsz,
                                     stride,
                                     half,
-                                    device,
-                                    batch_size), daemon=True)
+                                    device), daemon=True)
         gpu_thread.start()
 
         video_inference_count = 0
@@ -906,13 +839,11 @@ def run_inference_directory(video_dir,
 
             # use .synchronize() to force CPU consumer thread to wait for GPU 
             # inference to finish before attempting to run NMS on the the tensor
-            batch_len = payload.get("batch_len", 1)
             if device.type != "cpu":
                 payload["inf_end_evt"].synchronize()
-                # divide batch time by batch_len for per-frame time
-                t_inf = (payload["inf_start_evt"].elapsed_time(payload["inf_end_evt"]) / 1000.0) / batch_len
+                t_inf = payload["inf_start_evt"].elapsed_time(payload["inf_end_evt"]) / 1000.0
             else:
-                t_inf = (payload["inf_end_evt"] - payload["inf_start_evt"]) / batch_len
+                t_inf = payload["inf_end_evt"] - payload["inf_start_evt"]
 
 
             # load Labels (extract original image dimensions from buffer)
@@ -1036,32 +967,24 @@ if __name__ == "__main__":
     # TensorRT engine files compiled from .pt weights
     TENSORRT_WEIGHTS_640 = PROJECT_ROOT / "weights/best_640_jetpack_6-2-3.engine"
     TENSORRT_WEIGHTS_1280 = PROJECT_ROOT / "weights/best_1280_jetpack_6-2-3.engine"
-
     TENSORRT_WEIGHTS_640_MIXED_PRECISION = PROJECT_ROOT / "weights/best_640_jetpack_6-2-3_mixedprecision.engine"
-
-    TENSORRT_WEIGHTS_640_BATCH2 = PROJECT_ROOT / "weights/best_640_jetpack_6-2-3_batch2.engine"
-    TENSORRT_WEIGHTS_1280_BATCH2 = PROJECT_ROOT / "weights/best_1280_jetpack_6-2-3_batch2.engine"
-
-    TENSORRT_WEIGHTS_640_BATCH4 = PROJECT_ROOT / "weights/best_640_jetpack_6-2-3_batch4.engine"
 
     run_inference_directory(video_dir = TEST_VIDEOS_DIR_MINIMUM,
                             label_dir = LABEL_DIR,
-                            weights = TENSORRT_WEIGHTS_640_BATCH4,
+                            weights = TENSORRT_WEIGHTS_640,
                             imgsz = 640, # MUST MATCH COMPILED WEIGHTS/ENGINE IMAGE SIZE
-                            batch_size = 4, # MUST MATCH STATIC COMPILED ENGINE BATCH SIZE
                             device_id = "0",
                             data_yaml = DATA_YAML,
                             conf_thres = 0.001,
                             iou_thres = 0.4,
                             warmup_frames = 30)
     
-    # run_inference_directory(video_dir = TEST_VIDEOS_DIR_MINIMUM,
-    #                         label_dir = LABEL_DIR,
-    #                         weights = TENSORRT_WEIGHTS_1280_BATCH2,
-    #                         imgsz = 1280, # MUST MATCH COMPILED WEIGHTS/ENGINE IMAGE SIZE
-    #                         batch_size = 2, # MUST MATCH STATIC COMPILED ENGINE BATCH SIZE
-    #                         device_id = "0",
-    #                         data_yaml = DATA_YAML,
-    #                         conf_thres = 0.001,
-    #                         iou_thres = 0.4,
-    #                         warmup_frames = 30)
+    run_inference_directory(video_dir = TEST_VIDEOS_DIR_MINIMUM,
+                            label_dir = LABEL_DIR,
+                            weights = TENSORRT_WEIGHTS_1280,
+                            imgsz = 1280, # MUST MATCH COMPILED WEIGHTS/ENGINE IMAGE SIZE
+                            device_id = "0",
+                            data_yaml = DATA_YAML,
+                            conf_thres = 0.001,
+                            iou_thres = 0.4,
+                            warmup_frames = 30)
