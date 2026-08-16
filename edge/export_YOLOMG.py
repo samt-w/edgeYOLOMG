@@ -78,10 +78,11 @@ def export_onnx(model, im, file, opset, train, dynamic, simplify, prefix=colorst
                           training=torch.onnx.TrainingMode.TRAINING if train else torch.onnx.TrainingMode.EVAL,
                           do_constant_folding=not train,
                           input_names=['images', 'masks'],
-                          output_names=['output'],
+                          output_names=['boxes', 'scores'],
                           dynamic_axes={'images': {0: 'batch', 2: 'height', 3: 'width'},
                                         'masks': {0: 'batch', 2: 'height', 3: 'width'},
-                                        'output': {0: 'batch', 1: 'anchors'}
+                                        'boxes': {0: 'batch', 1: 'anchors'},
+                                        'scores': {0: 'batch', 1: 'anchors'}
                                         } if dynamic else None)
 
         # Checks

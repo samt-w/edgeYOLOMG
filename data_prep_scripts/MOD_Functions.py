@@ -445,14 +445,14 @@ def motion_compensate_cuda(frame1_gpu, frame2_gpu, lk_solver, ones_gpu, pts_prev
             homography_matrix = np.array([[0.999, 0, 0], [0, 0.999, 0], [0, 0, 1]], dtype=np.float32)
 
     # Calculate the transformed image based on the transformation matrix
-    compensated_gpu = cv2.cuda.warpPerspective(frame1_gpu, homography_matrix, (width, height), flags=cv2.INTER_LINEAR + cv2.WARP_INVERSE_MAP)
+    compensated_gpu = cv2.cuda.warpPerspective(frame1_gpu, homography_matrix, (width, height), flags=cv2.INTER_LINEAR + cv2.WARP_INVERSE_MAP, stream = cv_stream)
 
     # Calculate mask of valid pixels (invalid pixels are marked as 255)
     # AMENDMENT TO ORIGINAL CODE:
     # instead of computing inverse matrix, just warp a uniform matrix using the transformation matrix
     # invalid pixels get marked as 0, and then get inverted using .bitwise_not() to match original logic
-    warped_ones_gpu = cv2.cuda.warpPerspective(ones_gpu, homography_matrix, (width, height), flags=cv2.INTER_LINEAR + cv2.WARP_INVERSE_MAP)
-    mask_gpu = cv2.cuda.bitwise_not(warped_ones_gpu)
+    warped_ones_gpu = cv2.cuda.warpPerspective(ones_gpu, homography_matrix, (width, height), flags=cv2.INTER_LINEAR + cv2.WARP_INVERSE_MAP, stream = cv_stream)
+    mask_gpu = cv2.cuda.bitwise_not(warped_ones_gpu, stream = cv_stream)
 
     return compensated_gpu, mask_gpu, avg_dst, motion_x, motion_y, homography_matrix
 

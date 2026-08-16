@@ -29,6 +29,10 @@ from datetime import datetime
 from queue import Queue
 from threading import Thread
 
+# import the TensorRT plugin registry for the EfficientNMS_TRT plugin
+import tensorrt as trt
+trt.init_libnvinfer_plugins(trt.Logger(trt.Logger.WARNING), "")
+
 from data_prep_scripts.MOD_Functions import motion_compensate_cuda
 from utils.augmentations import letterbox_cuda
 from utils.metrics import box_iou, ap_per_class
@@ -174,16 +178,33 @@ def execute_forward_pass(model,
         with torch.no_grad():
             # forward pass
             pred = model(img1, img2, augment = False)
-            # check whether the output is bundled as a list or tuple, and pass just 
-            # the prediction tensor onwards
-            if isinstance(pred, (list, tuple)):
-                pred = pred[0]
+
+            # detect if the engine is using the custom .engine NMS plugin (4 prediction outputs rather than 1)
+            if isinstance(pred, (list, tuple)) and len(pred) == 4:
+                num_dets, det_boxes, det_scores, det_classes = pred
+
+                # extract valid detections
+                b_boxes = det_boxes[0]
+                b_scores = det_scores[0].unsqueeze(1)
+                b_classes = det_classes[0].unsqueeze(1).float()
+
+                # format predictions as [300, 6] tensor: [x1, y1, x2, y2, score, class]
+                formatted_pred = torch.cat([b_boxes, b_scores, b_classes], dim = 1)
+                is_nms_done = True
+                # return a tuple of the padded predictions and the num_dets tensor
+                pred_out = (formatted_pred, num_dets[0])
+            else:
+                # if not using .engine with EfficientNMS plugin, revert to standard prediction output
+                if isinstance(pred, (list, tuple)):
+                    pred = pred[0]
+                is_nms_done = False
+                pred_out = pred
 
         # end timing inference
         end_inf.record()
 
         # return unsynchronised timing events
-        return pred, start_inf, end_inf
+        return pred_out, is_nms_done, start_inf, end_inf
         
     else:
         # logic for executing and timing CPU runs
@@ -702,14 +723,19 @@ def gpu_pipeline_worker(input_queue,
                 img2 /= 255.0
 
                 # execute prediction and record timings
-                pred, inf_start_evt, inf_end_evt = execute_forward_pass(model, img1, img2, device)
+                pred, is_nms_done, inf_start_evt, inf_end_evt = execute_forward_pass(model, img1, img2, device)
 
                 # copy predictions to avoid them being overwritten by next loop
-                pred = pred.clone()
+                if is_nms_done:
+                    padded_pred, num_detections = pred
+                    pred = (padded_pred, num_detections.clone()) # padded_pred is a new tensor, so no clone needed
+                else:
+                    pred = pred.clone()
             
             # package raw tensors and events, push to evaluation queue
             payload = {
                 "pred": pred,
+                "is_nms_done": is_nms_done,
                 "inf_start_evt": inf_start_evt,
                 "inf_end_evt": inf_end_evt,
                 "frame_idx": target_frame_idx,
@@ -860,8 +886,19 @@ def run_inference_directory(video_dir,
             # conduct non-maximum suppression
             nms_start = time.time()
 
-            # execute prediction and record timings
-            pred_nms = non_max_suppression(payload["pred"], conf_thres, iou_thres)[0]            
+            if payload.get("is_nms_done", False):
+                # unpack the tuple passed from the worker
+                padded_pred, num_dets = payload["pred"]
+                
+                # extract detections integer now that the stream is synchronised
+                n = int(num_dets[0].item())
+                
+                # slice the padded array to return only valid detections
+                pred_nms = padded_pred[:n, :]
+            else:
+                # if .engine did not conduct NMS, need to run normal NMS function
+                pred_nms = non_max_suppression(payload["pred"], conf_thres, iou_thres)[0]
+        
             t_nms = time.time() - nms_start
 
             # compute pipeline throughput time for this frame
@@ -968,10 +1005,11 @@ if __name__ == "__main__":
     TENSORRT_WEIGHTS_640 = PROJECT_ROOT / "weights/best_640_jetpack_6-2-3.engine"
     TENSORRT_WEIGHTS_1280 = PROJECT_ROOT / "weights/best_1280_jetpack_6-2-3.engine"
     TENSORRT_WEIGHTS_640_MIXED_PRECISION = PROJECT_ROOT / "weights/best_640_jetpack_6-2-3_mixedprecision.engine"
+    TENSORRT_WEIGHTS_640_NMS = PROJECT_ROOT / "weights/best_640_jetpack_6-2-3_nms.engine"
 
     run_inference_directory(video_dir = TEST_VIDEOS_DIR_MINIMUM,
                             label_dir = LABEL_DIR,
-                            weights = TENSORRT_WEIGHTS_640,
+                            weights = TENSORRT_WEIGHTS_640_NMS,
                             imgsz = 640, # MUST MATCH COMPILED WEIGHTS/ENGINE IMAGE SIZE
                             device_id = "0",
                             data_yaml = DATA_YAML,
@@ -979,12 +1017,12 @@ if __name__ == "__main__":
                             iou_thres = 0.4,
                             warmup_frames = 30)
     
-    run_inference_directory(video_dir = TEST_VIDEOS_DIR_MINIMUM,
-                            label_dir = LABEL_DIR,
-                            weights = TENSORRT_WEIGHTS_1280,
-                            imgsz = 1280, # MUST MATCH COMPILED WEIGHTS/ENGINE IMAGE SIZE
-                            device_id = "0",
-                            data_yaml = DATA_YAML,
-                            conf_thres = 0.001,
-                            iou_thres = 0.4,
-                            warmup_frames = 30)
+    # run_inference_directory(video_dir = TEST_VIDEOS_DIR_MINIMUM,
+    #                         label_dir = LABEL_DIR,
+    #                         weights = TENSORRT_WEIGHTS_1280,
+    #                         imgsz = 1280, # MUST MATCH COMPILED WEIGHTS/ENGINE IMAGE SIZE
+    #                         device_id = "0",
+    #                         data_yaml = DATA_YAML,
+    #                         conf_thres = 0.001,
+    #                         iou_thres = 0.4,
+    #                         warmup_frames = 30)

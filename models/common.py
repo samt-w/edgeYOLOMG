@@ -662,7 +662,7 @@ class DetectMultiBackend(nn.Module):
             LOGGER.info(f'Loading {w} for TensorRT inference...')
             import tensorrt as trt  # https://developer.nvidia.com/nvidia-tensorrt-download
             check_version(trt.__version__, '7.0.0', hard=True)  # require tensorrt>=7.0.0
-            Binding = namedtuple('Binding', ('name', 'dtype', 'shape', 'data', 'ptr'))
+            Binding = namedtuple('Binding', ('name', 'dtype', 'shape', 'data', 'ptr', 'is_output'))
             logger = trt.Logger(trt.Logger.INFO)
             with open(w, 'rb') as f, trt.Runtime(logger) as runtime:
                 model = runtime.deserialize_cuda_engine(f.read())
@@ -674,26 +674,34 @@ class DetectMultiBackend(nn.Module):
             is_trt10 = int(trt.__version__.split('.')[0]) >= 10
             
             if is_trt10:
+                self.output_names = []
                 for i in range(model.num_io_tensors):
                     # TRT10 uses named tensors, not indexes
                     name = model.get_tensor_name(i)
                     dtype = trt.nptype(model.get_tensor_dtype(name))
                     shape = tuple(model.get_tensor_shape(name))
                     data = torch.from_numpy(np.empty(shape, dtype=np.dtype(dtype))).to(device)
-                    bindings[name] = Binding(name, dtype, shape, data, int(data.data_ptr()))
                     
                     is_input = model.get_tensor_mode(name) == trt.TensorIOMode.INPUT
+                    is_output = not is_input
+                    
+                    bindings[name] = Binding(name, dtype, shape, data, int(data.data_ptr()), is_output)
+                    
+                    if is_output:
+                        self.output_names.append(name)
                     if is_input and dtype == np.float16:
                         fp16 = True
                     context.set_tensor_address(name, int(data.data_ptr()))
             else:
+                self.output_names = ['output']
                 for index in range(model.num_bindings):
                     name = model.get_binding_name(index)
                     dtype = trt.nptype(model.get_binding_dtype(index))
                     shape = tuple(model.get_binding_shape(index))
                     data = torch.from_numpy(np.empty(shape, dtype=np.dtype(dtype))).to(device)
-                    bindings[name] = Binding(name, dtype, shape, data, int(data.data_ptr()))
-                    if model.binding_is_input(index) and dtype == np.float16:
+                    is_output = not model.binding_is_input(index)
+                    bindings[name] = Binding(name, dtype, shape, data, int(data.data_ptr()), is_output)
+                    if not is_output and dtype == np.float16:
                         fp16 = True
 
             binding_addrs = OrderedDict((n, d.ptr) for n, d in bindings.items())
@@ -778,14 +786,23 @@ class DetectMultiBackend(nn.Module):
             if is_trt10:
                 self.context.set_tensor_address('images', int(im.data_ptr()))
                 self.context.set_tensor_address('masks', int(im2.data_ptr()))
-                self.context.set_tensor_address('output', int(self.bindings['output'].data.data_ptr()))
+                
+                # dynamically set addresses for all outputs
+                for name in self.output_names:
+                    self.context.set_tensor_address(name, int(self.bindings[name].data.data_ptr()))
+                    
                 self.context.execute_async_v3(torch.cuda.current_stream().cuda_stream)
+                
+                # if multiple outputs (like NMS), return as tuple
+                if len(self.output_names) > 1:
+                    y = tuple(self.bindings[name].data for name in self.output_names)
+                else:
+                    y = self.bindings[self.output_names[0]].data
             else:
                 self.binding_addrs['images'] = int(im.data_ptr())
                 self.binding_addrs['masks'] = int(im2.data_ptr())
                 self.context.execute_v2(list(self.binding_addrs.values()))
-            
-            y = self.bindings['output'].data
+                y = self.bindings['output'].data
         elif self.coreml:  # CoreML
             im = im.permute(0, 2, 3, 1).cpu().numpy()  # torch BCHW to numpy BHWC shape(1,320,192,3)
             im = Image.fromarray((im[0] * 255).astype('uint8'))
