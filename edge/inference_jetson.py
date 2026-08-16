@@ -20,6 +20,7 @@ from config import TEST_VIDEOS_DIR, TEST_VIDEOS_DIR_MINIMUM, LABELS_TEST_DIR, PR
 import cv2
 import torch
 import numpy as np
+import cupy as cp
 from clearml import Task
 from collections import deque
 import time
@@ -35,7 +36,15 @@ from utils.general import check_img_size, non_max_suppression, xywhn2xyxy, scale
 from utils.torch_utils import select_device
 from models.common import DetectMultiBackend
 
-def compute_mask_and_preprocess_cuda(target_frame_gpu, blur_frames_gpu, imgsz, stride, lk_solver, original_dims, ones_gpu, pts_prev_cpu, pts_prev_gpu):
+def compute_mask_and_preprocess_cuda(target_frame_gpu,
+                                     blur_frames_gpu,
+                                     imgsz,
+                                     stride,
+                                     lk_solver,
+                                     original_dims,
+                                     ones_gpu,
+                                     pts_prev_cpu,
+                                     pts_prev_gpu):
     """
     This function computes ego motion compensation (using Lucas-Kanade), a motion 
     mask, and letterboxing for three sequential frames (which have previously
@@ -53,8 +62,8 @@ def compute_mask_and_preprocess_cuda(target_frame_gpu, blur_frames_gpu, imgsz, s
         pts_prev_gpu: the global motion flow filter (on GPU)
         
     Returns a tuple (img1, img2, (h0, w0), t_mask, t_prep) where img1 is the processed target frame 
-    tensor, img2 is the motion mask tensor, (h0, w0) is the original image height and width, and t_mask 
-    and t_prep are the measured processing times in seconds
+    tensor as a GPU object, img2 is the motion mask tensor (also on GPU), (h0, w0) is the original image height and 
+    width, and t_mask and t_prep are the measured processing times in seconds
     """
     t_mask_start = time.time()
     
@@ -82,23 +91,9 @@ def compute_mask_and_preprocess_cuda(target_frame_gpu, blur_frames_gpu, imgsz, s
     # retrieve dimensions for passing onwards
     h0, w0 = original_dims
 
-    # send frames to CPU for conversion to PyTorch
-    target_cpu = target_img_gpu.download()
-    mask_cpu = mask_img_gpu.download()
-    
-    # convert from OpenCV's default BGR to RGB
-    target_cpu = target_cpu[:, :, ::-1].transpose(2, 0, 1)
-    mask_cpu = mask_cpu[:, :, ::-1].transpose(2, 0, 1)
-    
-    # convert frames to PyTorch format for inference
-    # add batch dimension to fit pytorch batch logic
-    # adds a dummy dimension at index 0 to create a 4D tensor of 1 image in the batch (1, C, H, W)
-    img1 = torch.from_numpy(np.ascontiguousarray(target_cpu)).unsqueeze(0)
-    img2 = torch.from_numpy(np.ascontiguousarray(mask_cpu)).unsqueeze(0)
-
     t_prep = time.time() - t_prep_start
 
-    return img1, img2, (h0, w0), t_mask, t_prep
+    return target_img_gpu, mask_img_gpu, (h0, w0), t_mask, t_prep
 
 def load_model_and_device(weights, device_id, imgsz, data_yaml):
     """
@@ -467,7 +462,6 @@ class VideoReader:
             f"filesrc location={video_filepath_abs} ! "
             "qtdemux ! h264parse ! nvv4l2decoder ! "
             "nvvidconv ! video/x-raw, format=BGRx ! "
-            "videoconvert ! video/x-raw, format=BGR ! "
             "appsink sync=false"
         )
 
@@ -526,6 +520,34 @@ class VideoReader:
         # match the OpenCV logic by stopping the thread and releasing the file
         self.stopped = True
         self.videocap.release()
+
+def gpumat_to_torch(gpu_mat):
+    """
+    helper function converting a cv2.cuda_GpuMat object to a PyTorch Tensor on the GPU via CuPy/DLPack without copying to the CPU
+    """
+    # get tensor dimensions
+    cols, rows = gpu_mat.size()
+    channels = gpu_mat.channels()
+
+    # get memory step (bytes per row)
+    # will be computed if unavailable in the python binding
+    try:
+        step = gpu_mat.step
+    except AttributeError:
+        step = cols * channels # assuming uint8 data (1 byte per element)
+    
+    # extract the raw CUDA memory pointer from OpenCV
+    mem = cp.cuda.UnownedMemory(gpu_mat.cudaPtr(), step * rows, gpu_mat)
+    memptr = cp.cuda.MemoryPointer(mem, 0)
+    
+    # wrap the pointer in a CuPy array
+    cp_arr = cp.ndarray(shape = (rows, cols, channels),
+                        dtype = cp.uint8,
+                        memptr = memptr, # the memory pointer argument
+                        strides = (step, channels, 1)) # stride logic: (bytes_per_row, bytes_per_pixel, bytes_per_element)
+    
+    # export the CuPy array to PyTorch via DLPack
+    return torch.from_dlpack(cp_arr.toDlpack())
         
 def gpu_pipeline_worker(input_queue,
                         output_queue,
@@ -613,9 +635,12 @@ def gpu_pipeline_worker(input_queue,
                 pts_prev_gpu = cv2.cuda_GpuMat()
                 pts_prev_gpu.upload(pts_prev_cpu)
 
-            # convert each frame to GpuMat object
-            frame_gpu = cv2.cuda_GpuMat()
-            frame_gpu.upload(frame)
+            # convert each 4-channel BGRx frame received from GStreamer to GpuMat object
+            frame_gpu_4ch = cv2.cuda_GpuMat()
+            frame_gpu_4ch.upload(frame)
+            
+            # drop the extra channel on the frame (BGRx becomes BGR)
+            frame_gpu = cv2.cuda.cvtColor(frame_gpu_4ch, cv2.COLOR_BGRA2BGR)
             
             # apply greyscaling and blur to the original RGB frame            
             gray_gpu = cv2.cuda.cvtColor(frame_gpu, cv2.COLOR_BGR2GRAY)
@@ -638,25 +663,34 @@ def gpu_pipeline_worker(input_queue,
             blur_frames_gpu = (buffer[0][1], buffer[2][1], buffer[4][1])
             original_dims = (h0, w0)
 
-            img1_cpu, img2_cpu, _, t_mask, t_prep = compute_mask_and_preprocess_cuda(target_frame_gpu,
-                                                                                     blur_frames_gpu,
-                                                                                     imgsz,
-                                                                                     stride,
-                                                                                     lk_solver,
-                                                                                     original_dims,
-                                                                                     ones_gpu,
-                                                                                     pts_prev_cpu,
-                                                                                     pts_prev_gpu)
+            target_img_gpu, mask_img_gpu, _, t_mask, t_prep = compute_mask_and_preprocess_cuda(target_frame_gpu,
+                                                                                               blur_frames_gpu,
+                                                                                               imgsz,
+                                                                                               stride,
+                                                                                               lk_solver,
+                                                                                               original_dims,
+                                                                                               ones_gpu,
+                                                                                               pts_prev_cpu,
+                                                                                               pts_prev_gpu)
             
             # enable PyTorch to use the worker stream for memory transfer
             with torch.cuda.stream(worker_stream):
-                # transfer CPU tensor to GPU
-                img1 = img1_cpu.to(device, non_blocking = True)
-                img1 = img1.half() if half else img1.float()
+                # zero-copy convert GpuMat to PyTorch Tensor
+                img1_torch = gpumat_to_torch(target_img_gpu)
+                img2_torch = gpumat_to_torch(mask_img_gpu)
+                
+                # PyTorch channel slicing and transpositions
+                # [:, :, [2, 1, 0]] reverses BGR to RGB
+                # .permute(2, 0, 1) switches HWC to CHW
+                # .unsqueeze(0) adds the batch dimension (1, C, H, W)
+                img1_torch = img1_torch[:, :, [2, 1, 0]].permute(2, 0, 1).unsqueeze(0)
+                img2_torch = img2_torch[:, :, [2, 1, 0]].permute(2, 0, 1).unsqueeze(0)
+                
+                # precision adjustment and pixel normalisation
+                img1 = img1_torch.half() if half else img1_torch.float()
                 img1 /= 255.0
                 
-                img2 = img2_cpu.to(device, non_blocking = True)
-                img2 = img2.half() if half else img2.float()
+                img2 = img2_torch.half() if half else img2_torch.float()
                 img2 /= 255.0
 
                 # execute prediction and record timings
