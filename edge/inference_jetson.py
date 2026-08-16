@@ -1042,24 +1042,26 @@ if __name__ == "__main__":
     TENSORRT_WEIGHTS_640_BATCH2 = PROJECT_ROOT / "weights/best_640_jetpack_6-2-3_batch2.engine"
     TENSORRT_WEIGHTS_1280_BATCH2 = PROJECT_ROOT / "weights/best_1280_jetpack_6-2-3_batch2.engine"
 
+    TENSORRT_WEIGHTS_640_BATCH4 = PROJECT_ROOT / "weights/best_640_jetpack_6-2-3_batch4.engine"
+
     run_inference_directory(video_dir = TEST_VIDEOS_DIR_MINIMUM,
                             label_dir = LABEL_DIR,
-                            weights = TENSORRT_WEIGHTS_640_BATCH2,
+                            weights = TENSORRT_WEIGHTS_640_BATCH4,
                             imgsz = 640, # MUST MATCH COMPILED WEIGHTS/ENGINE IMAGE SIZE
-                            batch_size = 2, # MUST MATCH STATIC COMPILED ENGINE BATCH SIZE
+                            batch_size = 4, # MUST MATCH STATIC COMPILED ENGINE BATCH SIZE
                             device_id = "0",
                             data_yaml = DATA_YAML,
                             conf_thres = 0.001,
                             iou_thres = 0.4,
                             warmup_frames = 30)
     
-    run_inference_directory(video_dir = TEST_VIDEOS_DIR_MINIMUM,
-                            label_dir = LABEL_DIR,
-                            weights = TENSORRT_WEIGHTS_1280_BATCH2,
-                            imgsz = 1280, # MUST MATCH COMPILED WEIGHTS/ENGINE IMAGE SIZE
-                            batch_size = 2, # MUST MATCH STATIC COMPILED ENGINE BATCH SIZE
-                            device_id = "0",
-                            data_yaml = DATA_YAML,
-                            conf_thres = 0.001,
-                            iou_thres = 0.4,
-                            warmup_frames = 30)
+    # run_inference_directory(video_dir = TEST_VIDEOS_DIR_MINIMUM,
+    #                         label_dir = LABEL_DIR,
+    #                         weights = TENSORRT_WEIGHTS_1280_BATCH2,
+    #                         imgsz = 1280, # MUST MATCH COMPILED WEIGHTS/ENGINE IMAGE SIZE
+    #                         batch_size = 2, # MUST MATCH STATIC COMPILED ENGINE BATCH SIZE
+    #                         device_id = "0",
+    #                         data_yaml = DATA_YAML,
+    #                         conf_thres = 0.001,
+    #                         iou_thres = 0.4,
+    #                         warmup_frames = 30)
