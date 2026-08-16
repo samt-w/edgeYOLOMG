@@ -375,7 +375,7 @@ def motion_compensate(frame1, frame2):
     return compensated, mask, avg_dst, motion_x, motion_y, homography_matrix
 
 
-def motion_compensate_cuda(frame1_gpu, frame2_gpu, lk_solver, ones_gpu):
+def motion_compensate_cuda(frame1_gpu, frame2_gpu, lk_solver, ones_gpu, pts_prev_cpu, pts_prev_gpu):
     """
     This function transforms frame1 so that frame1 matches the camera position of frame2
 
@@ -394,32 +394,7 @@ def motion_compensate_cuda(frame1_gpu, frame2_gpu, lk_solver, ones_gpu):
     frame1_grid_gpu = cv2.cuda.resize(frame1_gpu, (960 * scale, 540 * scale), interpolation=cv2.INTER_CUBIC)
     frame2_grid_gpu = cv2.cuda.resize(frame2_gpu, (960 * scale, 540 * scale), interpolation=cv2.INTER_CUBIC)
 
-    width_grid = frame2_grid_gpu.size()[0]
-    height_grid = frame2_grid_gpu.size()[1]
-    
-    gridSizeW = 32 * scale
-    gridSizeH = 24 * scale
-
-    p1 = []
-    grid_numW = int(width_grid / gridSizeW - 1)
-    grid_numH = int(height_grid / gridSizeH - 1)
-    for i in range(grid_numW):
-        for j in range(grid_numH):
-            point = (np.float32(i * gridSizeW + gridSizeW / 2.0), np.float32(j * gridSizeH + gridSizeH / 2.0))
-            p1.append(point)
-    
-    # reshape the array, automatically computing dimensions with "-1", and specifying FP32 as
-    # required by cv2.cuda
-    pts_prev = np.array(p1, dtype=np.float32).reshape(1, -1, 2)
-    # move points to GPU
-    pts_prev_gpu = cv2.cuda_GpuMat()
-    pts_prev_gpu.upload(pts_prev)
-
     # use the Lucas-Kanade algorithm to track how grid points moved between frames
-    # -------------------------------
-    # COMMENTING OUT ORIGINAL LINE TO PASS OBJECT GLOBALLY
-    # lk_solver = cv2.cuda.SparsePyrLKOpticalFlow.create(winSize = (15, 15), maxLevel = 3)
-    # -------------------------------
     pts_cur_gpu, status_gpu, err_gpu = lk_solver.calc(frame1_grid_gpu, frame2_grid_gpu, pts_prev_gpu, None)
 
     # convert results to CPU for filtering
@@ -428,42 +403,42 @@ def motion_compensate_cuda(frame1_gpu, frame2_gpu, lk_solver, ones_gpu):
 
     # Select the good points
     good_new = pts_cur[status == 1] # Tracking points in the current frame
-    good_old = pts_prev[status == 1] # Tracking point in the previous frame
+    good_old = pts_prev_cpu[status == 1] # Tracking point in the previous frame
 
-    # Draw tracking box
-    motion_distance = []
-    translate_x = []
-    translate_y = []
-
-    # compute Euclidean distance for points. If point moved more than a given
+    # vectorised operations for computing Euclidean distance for points. If point moved more than a given
     # threshold (50px for 1920px images), remove it (to avoid tracking errors)
-    dist_thresh = 50
+    if len(good_new) > 0 and len(good_old) > 0:
+        # compute difference between points
+        diff = good_new - good_old 
+        motion_distance = np.linalg.norm(diff, axis=1) 
 
-    for new, old in zip(good_new, good_old):
-        a, b = new.ravel()
-        c, d = old.ravel()
-        motion_distance0 = np.sqrt((a - c) * (a - c) + (b - d) * (b - d))
+        dist_thresh = 50
+        valid_mask = motion_distance <= dist_thresh
+        
+        valid_diff = diff[valid_mask]
+        valid_distances = motion_distance[valid_mask]
+        
+        filtered_new = good_new[valid_mask]
+        filtered_old = good_old[valid_mask]
+    else:
+        valid_diff = np.array([])
+        filtered_new = np.array([])
+        filtered_old = np.array([])
 
-        if motion_distance0 > dist_thresh:
-            continue
-
-        translate_x.append(a - c)
-        translate_y.append(b - d)
-        motion_distance.append(motion_distance0)
-
-    if len(translate_x) == 0:
+    if len(valid_diff) == 0:
         motion_x, motion_y, avg_dst = 0.0, 0.0, 0.0
     else:
-        motion_x = np.mean(translate_x)
-        motion_y = np.mean(translate_y)
-        avg_dst = np.mean(motion_distance)
+        # compute coordinate translations instantly
+        motion_x = np.mean(valid_diff[:, 0])
+        motion_y = np.mean(valid_diff[:, 1])
+        avg_dst = np.mean(valid_distances)
 
     # if fewer than 15 valid points, just use identity matrix as not enough data
     # otherwise, use the RANSAC algorithm to compute the transformation matrix
-    if len(good_old) < 15:
+    if len(filtered_old) < 15:
         homography_matrix = np.array([[0.999, 0, 0], [0, 0.999, 0], [0, 0, 1]], dtype=np.float32)
     else:
-        homography_matrix, _ = cv2.findHomography(good_new, good_old, cv2.RANSAC, 3.0)
+        homography_matrix, _ = cv2.findHomography(filtered_new, filtered_old, cv2.RANSAC, 3.0)
         # ensure any RANSAC failures are caught
         if homography_matrix is None:
             homography_matrix = np.array([[0.999, 0, 0], [0, 0.999, 0], [0, 0, 1]], dtype=np.float32)

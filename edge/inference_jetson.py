@@ -35,7 +35,7 @@ from utils.general import check_img_size, non_max_suppression, xywhn2xyxy, scale
 from utils.torch_utils import select_device
 from models.common import DetectMultiBackend
 
-def compute_mask_and_preprocess_cuda(target_frame_gpu, blur_frames_gpu, imgsz, stride, lk_solver, original_dims, ones_gpu):
+def compute_mask_and_preprocess_cuda(target_frame_gpu, blur_frames_gpu, imgsz, stride, lk_solver, original_dims, ones_gpu, pts_prev_cpu, pts_prev_gpu):
     """
     This function computes ego motion compensation (using Lucas-Kanade), a motion 
     mask, and letterboxing for three sequential frames (which have previously
@@ -49,6 +49,8 @@ def compute_mask_and_preprocess_cuda(target_frame_gpu, blur_frames_gpu, imgsz, s
         lk_solver: the global cv2.cuda.SparsePyrLKOpticalFlow object
         original_dims: the original dimensions of the image
         ones_gpu: a uniform matrix as a GpuMat object used for homography
+        pts_prev_cpu: the global motion flow filter (on CPU)
+        pts_prev_gpu: the global motion flow filter (on GPU)
         
     Returns a tuple (img1, img2, (h0, w0), t_mask, t_prep) where img1 is the processed target frame 
     tensor, img2 is the motion mask tensor, (h0, w0) is the original image height and width, and t_mask 
@@ -59,8 +61,8 @@ def compute_mask_and_preprocess_cuda(target_frame_gpu, blur_frames_gpu, imgsz, s
     blur1_gpu, blur_target_gpu, blur2_gpu = blur_frames_gpu
 
     # compute motion compensation and differences
-    comp1_gpu, _, _, _, _, _ = motion_compensate_cuda(blur1_gpu, blur_target_gpu, lk_solver, ones_gpu)
-    comp2_gpu, _, _, _, _, _ = motion_compensate_cuda(blur2_gpu, blur_target_gpu, lk_solver, ones_gpu)
+    comp1_gpu, _, _, _, _, _ = motion_compensate_cuda(blur1_gpu, blur_target_gpu, lk_solver, ones_gpu, pts_prev_cpu, pts_prev_gpu)
+    comp2_gpu, _, _, _, _, _ = motion_compensate_cuda(blur2_gpu, blur_target_gpu, lk_solver, ones_gpu, pts_prev_cpu, pts_prev_gpu)
     frameDiff1 = cv2.cuda.absdiff(blur_target_gpu, comp1_gpu)
     frameDiff2 = cv2.cuda.absdiff(blur_target_gpu, comp2_gpu)
 
@@ -562,6 +564,9 @@ def gpu_pipeline_worker(input_queue,
         buffer = deque(maxlen = 5)
         t_read_buffer = deque(maxlen = 5)
         ones_gpu = None
+        # initialise empty variable for tracking points
+        pts_prev_cpu = None
+        pts_prev_gpu = None
         frame_count = 0
         
         while True:
@@ -586,6 +591,27 @@ def gpu_pipeline_worker(input_queue,
                 ones = np.full((h0, w0), 255, dtype = np.uint8)
                 ones_gpu = cv2.cuda_GpuMat()
                 ones_gpu.upload(ones)
+
+                # vectorised optical flow grid initialisation
+                scale = 2
+                width_grid = 960 * scale
+                height_grid = 540 * scale
+                gridSizeW = 32 * scale
+                gridSizeH = 24 * scale
+                
+                grid_numW = int(width_grid / gridSizeW - 1)
+                grid_numH = int(height_grid / gridSizeH - 1)
+                
+                # generate vectors with NumPy (replaces a previous Python for loop)
+                x_coords = np.arange(grid_numW, dtype=np.float32) * gridSizeW + gridSizeW / 2.0
+                y_coords = np.arange(grid_numH, dtype=np.float32) * gridSizeH + gridSizeH / 2.0
+                
+                # convert coordinates into the 3D (batch, num_points, coordinates) matrix required for Lucas-Kanade 
+                xv, yv = np.meshgrid(x_coords, y_coords, indexing = "ij")
+                pts_prev_cpu = np.stack((xv.ravel(), yv.ravel()), axis = -1).reshape(1, -1, 2)
+                
+                pts_prev_gpu = cv2.cuda_GpuMat()
+                pts_prev_gpu.upload(pts_prev_cpu)
 
             # convert each frame to GpuMat object
             frame_gpu = cv2.cuda_GpuMat()
@@ -618,7 +644,9 @@ def gpu_pipeline_worker(input_queue,
                                                                                      stride,
                                                                                      lk_solver,
                                                                                      original_dims,
-                                                                                     ones_gpu)
+                                                                                     ones_gpu,
+                                                                                     pts_prev_cpu,
+                                                                                     pts_prev_gpu)
             
             # enable PyTorch to use the worker stream for memory transfer
             with torch.cuda.stream(worker_stream):
