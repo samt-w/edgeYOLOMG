@@ -375,7 +375,7 @@ def motion_compensate(frame1, frame2):
     return compensated, mask, avg_dst, motion_x, motion_y, homography_matrix
 
 
-def motion_compensate_cuda(frame1_gpu, frame2_gpu, lk_solver, ones_gpu, pts_prev_cpu, pts_prev_gpu):
+def motion_compensate_cuda(frame1_gpu, frame2_gpu, lk_solver, ones_gpu, pts_prev_cpu, pts_prev_gpu, cv_stream):
     """
     This function transforms frame1 so that frame1 matches the camera position of frame2
 
@@ -391,13 +391,14 @@ def motion_compensate_cuda(frame1_gpu, frame2_gpu, lk_solver, ones_gpu, pts_prev
     width, height = frame2_gpu.size()
     scale = 2
     # compute filter grid across the image
-    frame1_grid_gpu = cv2.cuda.resize(frame1_gpu, (960 * scale, 540 * scale), interpolation=cv2.INTER_CUBIC)
-    frame2_grid_gpu = cv2.cuda.resize(frame2_gpu, (960 * scale, 540 * scale), interpolation=cv2.INTER_CUBIC)
+    frame1_grid_gpu = cv2.cuda.resize(frame1_gpu, (960 * scale, 540 * scale), interpolation=cv2.INTER_CUBIC, stream = cv_stream)
+    frame2_grid_gpu = cv2.cuda.resize(frame2_gpu, (960 * scale, 540 * scale), interpolation=cv2.INTER_CUBIC, stream = cv_stream)
 
     # use the Lucas-Kanade algorithm to track how grid points moved between frames
-    pts_cur_gpu, status_gpu, err_gpu = lk_solver.calc(frame1_grid_gpu, frame2_grid_gpu, pts_prev_gpu, None)
+    pts_cur_gpu, status_gpu, err_gpu = lk_solver.calc(frame1_grid_gpu, frame2_grid_gpu, pts_prev_gpu, None, stream = cv_stream)
 
-    # convert results to CPU for filtering
+    # wait for stream synchronisation, then convert results to CPU for filtering
+    cv_stream.waitForCompletion()
     pts_cur = pts_cur_gpu.download()
     status = status_gpu.download()
 

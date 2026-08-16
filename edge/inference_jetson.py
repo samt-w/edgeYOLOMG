@@ -44,7 +44,8 @@ def compute_mask_and_preprocess_cuda(target_frame_gpu,
                                      original_dims,
                                      ones_gpu,
                                      pts_prev_cpu,
-                                     pts_prev_gpu):
+                                     pts_prev_gpu,
+                                     cv_stream):
     """
     This function computes ego motion compensation (using Lucas-Kanade), a motion 
     mask, and letterboxing for three sequential frames (which have previously
@@ -60,6 +61,7 @@ def compute_mask_and_preprocess_cuda(target_frame_gpu,
         ones_gpu: a uniform matrix as a GpuMat object used for homography
         pts_prev_cpu: the global motion flow filter (on CPU)
         pts_prev_gpu: the global motion flow filter (on GPU)
+        cv_stream: the CUDA stream for OpenCV
         
     Returns a tuple (img1, img2, (h0, w0), t_mask, t_prep) where img1 is the processed target frame 
     tensor as a GPU object, img2 is the motion mask tensor (also on GPU), (h0, w0) is the original image height and 
@@ -70,27 +72,27 @@ def compute_mask_and_preprocess_cuda(target_frame_gpu,
     blur1_gpu, blur_target_gpu, blur2_gpu = blur_frames_gpu
 
     # compute motion compensation and differences
-    comp1_gpu, _, _, _, _, _ = motion_compensate_cuda(blur1_gpu, blur_target_gpu, lk_solver, ones_gpu, pts_prev_cpu, pts_prev_gpu)
-    comp2_gpu, _, _, _, _, _ = motion_compensate_cuda(blur2_gpu, blur_target_gpu, lk_solver, ones_gpu, pts_prev_cpu, pts_prev_gpu)
-    frameDiff1 = cv2.cuda.absdiff(blur_target_gpu, comp1_gpu)
-    frameDiff2 = cv2.cuda.absdiff(blur_target_gpu, comp2_gpu)
+    comp1_gpu, _, _, _, _, _ = motion_compensate_cuda(blur1_gpu, blur_target_gpu, lk_solver, ones_gpu, pts_prev_cpu, pts_prev_gpu, cv_stream)
+    comp2_gpu, _, _, _, _, _ = motion_compensate_cuda(blur2_gpu, blur_target_gpu, lk_solver, ones_gpu, pts_prev_cpu, pts_prev_gpu, cv_stream)
+    frameDiff1 = cv2.cuda.absdiff(blur_target_gpu, comp1_gpu, stream = cv_stream)
+    frameDiff2 = cv2.cuda.absdiff(blur_target_gpu, comp2_gpu, stream = cv_stream)
 
     # average the differences to create the continuous motion mask
-    frameDiff = cv2.cuda.addWeighted(frameDiff1, 0.5, frameDiff2, 0.5, 0)
+    frameDiff = cv2.cuda.addWeighted(frameDiff1, 0.5, frameDiff2, 0.5, 0, stream = cv_stream)
 
     # inflate 2D motion mask to 3D tensor
-    frameDiff_3d = cv2.cuda.cvtColor(frameDiff, cv2.COLOR_GRAY2BGR)
+    frameDiff_3d = cv2.cuda.cvtColor(frameDiff, cv2.COLOR_GRAY2BGR, stream = cv_stream)
 
     t_mask = time.time() - t_mask_start
     t_prep_start = time.time()
 
     # pad and resize the image while maintaining aspect ratio
-    target_img_gpu = letterbox_cuda(target_frame_gpu, new_shape = (imgsz, imgsz), color = (114, 114, 114), stride = stride, auto=False)[0]
-    mask_img_gpu = letterbox_cuda(frameDiff_3d, new_shape = (imgsz, imgsz), color = (0, 0, 0), stride = stride, auto=False)[0]
+    target_img_gpu = letterbox_cuda(target_frame_gpu, cv_stream, new_shape = (imgsz, imgsz), color = (114, 114, 114), stride = stride, auto=False)[0]
+    mask_img_gpu = letterbox_cuda(frameDiff_3d, cv_stream, new_shape = (imgsz, imgsz), color = (0, 0, 0), stride = stride, auto=False)[0]
 
     # convert BGR to RGB on the GPU before DLPack bridge
-    target_img_gpu = cv2.cuda.cvtColor(target_img_gpu, cv2.COLOR_BGR2RGB)
-    mask_img_gpu = cv2.cuda.cvtColor(mask_img_gpu, cv2.COLOR_BGR2RGB)
+    target_img_gpu = cv2.cuda.cvtColor(target_img_gpu, cv2.COLOR_BGR2RGB, stream = cv_stream)
+    mask_img_gpu = cv2.cuda.cvtColor(mask_img_gpu, cv2.COLOR_BGR2RGB, stream = cv_stream)
     
     # retrieve dimensions for passing onwards
     h0, w0 = original_dims
@@ -584,8 +586,9 @@ def gpu_pipeline_worker(input_queue,
         lk_solver = cv2.cuda.SparsePyrLKOpticalFlow.create(winSize = (15, 15), maxLevel = 3)
         gaussian_filter = cv2.cuda.createGaussianFilter(cv2.CV_8UC1, cv2.CV_8UC1, (11, 11), 0)
         
-        # initialise a CUDA stream for this background thread
+        # initialise a CUDA stream for the background thread and OpenCV
         worker_stream = torch.cuda.Stream(device)
+        cv_stream = cv2.cuda_Stream()
         
         # initialise buffers and state variables
         buffer = deque(maxlen = 5)
@@ -617,7 +620,7 @@ def gpu_pipeline_worker(input_queue,
             if ones_gpu is None:
                 ones = np.full((h0, w0), 255, dtype = np.uint8)
                 ones_gpu = cv2.cuda_GpuMat()
-                ones_gpu.upload(ones)
+                ones_gpu.upload(ones, stream = cv_stream)
 
                 # vectorised optical flow grid initialisation
                 scale = 2
@@ -638,15 +641,15 @@ def gpu_pipeline_worker(input_queue,
                 pts_prev_cpu = np.stack((xv.ravel(), yv.ravel()), axis = -1).reshape(1, -1, 2)
                 
                 pts_prev_gpu = cv2.cuda_GpuMat()
-                pts_prev_gpu.upload(pts_prev_cpu)
+                pts_prev_gpu.upload(pts_prev_cpu, stream = cv_stream)
 
             # convert each frame to GpuMat object
             frame_gpu = cv2.cuda_GpuMat()
-            frame_gpu.upload(frame)
+            frame_gpu.upload(frame, stream = cv_stream)
             
             # apply greyscaling and blur to the original RGB frame            
-            gray_gpu = cv2.cuda.cvtColor(frame_gpu, cv2.COLOR_BGR2GRAY)
-            blur_gpu = gaussian_filter.apply(gray_gpu)
+            gray_gpu = cv2.cuda.cvtColor(frame_gpu, cv2.COLOR_BGR2GRAY, stream = cv_stream)
+            blur_gpu = gaussian_filter.apply(gray_gpu, stream = cv_stream)
             
             # add full resolution GpuMat objects to the buffer
             buffer.append((frame_gpu, blur_gpu))
@@ -673,7 +676,11 @@ def gpu_pipeline_worker(input_queue,
                                                                                                original_dims,
                                                                                                ones_gpu,
                                                                                                pts_prev_cpu,
-                                                                                               pts_prev_gpu)
+                                                                                               pts_prev_gpu,
+                                                                                               cv_stream)
+            
+            # wait for OpenCV to write the tensor
+            cv_stream.waitForCompletion()
             
             # enable PyTorch to use the worker stream for memory transfer
             with torch.cuda.stream(worker_stream):

@@ -126,7 +126,7 @@ def letterbox(im, new_shape=(640, 640), color=(114, 114, 114), auto=True, scaleF
     im = cv2.copyMakeBorder(im, top, bottom, left, right, cv2.BORDER_CONSTANT, value=color)  # add border
     return im, ratio, (dw, dh)
 
-def letterbox_cuda(im_gpu, new_shape=(640, 640), color=(114, 114, 114), auto=True, scaleFill=False, scaleup=True, stride=32):
+def letterbox_cuda(im_gpu, cv_stream, new_shape=(640, 640), color=(114, 114, 114), auto=True, scaleFill=False, scaleup=True, stride=32):
     # Resize and pad image while meeting stride-multiple constraints
     # the im_gpu input must be a cv2.cuda_GpuMat object
     # cv2.cuda_GpuMat.size() returns (width, height)
@@ -159,12 +159,12 @@ def letterbox_cuda(im_gpu, new_shape=(640, 640), color=(114, 114, 114), auto=Tru
     dh /= 2
 
     if shape[::-1] != new_unpad:  # resize
-        im_gpu = cv2.cuda.resize(im_gpu, new_unpad, interpolation=cv2.INTER_LINEAR)
+        im_gpu = cv2.cuda.resize(im_gpu, new_unpad, interpolation=cv2.INTER_LINEAR, stream = cv_stream)
     # compute which sides should be padded
     top, bottom = int(round(dh - 0.1)), int(round(dh + 0.1))
     left, right = int(round(dw - 0.1)), int(round(dw + 0.1))
     # perform padding
-    im_gpu = cv2.cuda.copyMakeBorder(im_gpu, top, bottom, left, right, cv2.BORDER_CONSTANT, value=color)
+    im_gpu = cv2.cuda.copyMakeBorder(im_gpu, top, bottom, left, right, cv2.BORDER_CONSTANT, value=color, stream = cv_stream)
     return im_gpu, ratio, (dw, dh)
 
 #随机透视变换
