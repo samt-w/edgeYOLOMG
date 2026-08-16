@@ -87,6 +87,10 @@ def compute_mask_and_preprocess_cuda(target_frame_gpu,
     # pad and resize the image while maintaining aspect ratio
     target_img_gpu = letterbox_cuda(target_frame_gpu, new_shape = (imgsz, imgsz), color = (114, 114, 114), stride = stride, auto=False)[0]
     mask_img_gpu = letterbox_cuda(frameDiff_3d, new_shape = (imgsz, imgsz), color = (0, 0, 0), stride = stride, auto=False)[0]
+
+    # convert BGR to RGB on the GPU before DLPack bridge
+    target_img_gpu = cv2.cuda.cvtColor(target_img_gpu, cv2.COLOR_BGR2RGB)
+    mask_img_gpu = cv2.cuda.cvtColor(mask_img_gpu, cv2.COLOR_BGR2RGB)
     
     # retrieve dimensions for passing onwards
     h0, w0 = original_dims
@@ -462,6 +466,7 @@ class VideoReader:
             f"filesrc location={video_filepath_abs} ! "
             "qtdemux ! h264parse ! nvv4l2decoder ! "
             "nvvidconv ! video/x-raw, format=BGRx ! "
+            "videoconvert ! video/x-raw, format=BGR ! "
             "appsink sync=false"
         )
 
@@ -635,12 +640,9 @@ def gpu_pipeline_worker(input_queue,
                 pts_prev_gpu = cv2.cuda_GpuMat()
                 pts_prev_gpu.upload(pts_prev_cpu)
 
-            # convert each 4-channel BGRx frame received from GStreamer to GpuMat object
-            frame_gpu_4ch = cv2.cuda_GpuMat()
-            frame_gpu_4ch.upload(frame)
-            
-            # drop the extra channel on the frame (BGRx becomes BGR)
-            frame_gpu = cv2.cuda.cvtColor(frame_gpu_4ch, cv2.COLOR_BGRA2BGR)
+            # convert each frame to GpuMat object
+            frame_gpu = cv2.cuda_GpuMat()
+            frame_gpu.upload(frame)
             
             # apply greyscaling and blur to the original RGB frame            
             gray_gpu = cv2.cuda.cvtColor(frame_gpu, cv2.COLOR_BGR2GRAY)
@@ -680,17 +682,16 @@ def gpu_pipeline_worker(input_queue,
                 img2_torch = gpumat_to_torch(mask_img_gpu)
                 
                 # PyTorch channel slicing and transpositions
-                # [:, :, [2, 1, 0]] reverses BGR to RGB
                 # .permute(2, 0, 1) switches HWC to CHW
                 # .unsqueeze(0) adds the batch dimension (1, C, H, W)
-                img1_torch = img1_torch[:, :, [2, 1, 0]].permute(2, 0, 1).unsqueeze(0)
-                img2_torch = img2_torch[:, :, [2, 1, 0]].permute(2, 0, 1).unsqueeze(0)
+                img1_torch = img1_torch.permute(2, 0, 1).unsqueeze(0)
+                img2_torch = img2_torch.permute(2, 0, 1).unsqueeze(0)
                 
-                # precision adjustment and pixel normalisation
-                img1 = img1_torch.half() if half else img1_torch.float()
+                # enable contiguous memory, and execute precision adjustment and pixel normalisation
+                img1 = img1_torch.contiguous().half() if half else img1_torch.contiguous().float()
                 img1 /= 255.0
                 
-                img2 = img2_torch.half() if half else img2_torch.float()
+                img2 = img2_torch.contiguous().half() if half else img2_torch.contiguous().float()
                 img2 /= 255.0
 
                 # execute prediction and record timings
