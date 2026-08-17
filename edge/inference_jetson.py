@@ -344,10 +344,7 @@ def calculate_metrics(timings,
         mean_inf = np.mean(timings["inf"])
         mean_nms = np.mean(timings["nms"])
         metrics["FPS_Full_Pipeline"] = 1.0 / mean_total
-        # have implemented asynchronous inference/nms, therefore need to
-        # measure theoretical inference-only pipeline as the slower of inference and NMS
-        bottleneck_inf_stage = max(mean_inf, mean_nms)
-        metrics["FPS_Inference_Only"] = 1.0 / bottleneck_inf_stage if bottleneck_inf_stage > 0 else 0.0
+        metrics["FPS_Inference_Only"] = 1.0 / (mean_inf + mean_nms) if (mean_inf + mean_nms) > 0 else 0.0
         metrics["Read_ms"] = np.mean(timings["read"]) * 1000
         metrics["Mask_ms"] = np.mean(timings["mask"]) * 1000
         metrics["Prep_ms"] = np.mean(timings["prep"]) * 1000
@@ -839,7 +836,7 @@ def run_inference_directory(video_dir,
     warmup_model(model, device, half, imgsz, warmup_iterations = 3)
     
     # initialise array for mAP50:90 calculation
-    iou_vector = torch.linspace(0.5, 0.95, 10, device = "cpu")
+    iou_vector = torch.linspace(0.5, 0.95, 10, device = device)
     iou_num = iou_vector.numel()
 
     # initialise list of test videos
@@ -926,15 +923,14 @@ def run_inference_directory(video_dir,
                 print(f"Warning: No labels found for frame {payload['frame_idx']:04d}. Skipping frame.")
                 continue
 
-            # transfer predictions tensor to CPU memory so NMS runs on CPU cores
-            # and does not compete with GPU TensorRT inference
-            pred_cpu = payload["pred"].detach().cpu()
+            # transfer labels to GPU for IoU computation
+            labels = labels.to(device)
             
             # conduct non-maximum suppression
             nms_start = time.time()
 
             # execute prediction and record timings
-            pred_nms = non_max_suppression(pred_cpu, conf_thres, iou_thres)[0]            
+            pred_nms = non_max_suppression(payload["pred"], conf_thres, iou_thres)[0]            
             t_nms = time.time() - nms_start
 
             # compute pipeline throughput time for this frame
