@@ -344,7 +344,10 @@ def calculate_metrics(timings,
         mean_inf = np.mean(timings["inf"])
         mean_nms = np.mean(timings["nms"])
         metrics["FPS_Full_Pipeline"] = 1.0 / mean_total
-        metrics["FPS_Inference_Only"] = 1.0 / (mean_inf + mean_nms) if (mean_inf + mean_nms) > 0 else 0.0
+        # have implemented asynchronous inference/nms, therefore need to
+        # measure theoretical inference-only pipeline as the slower of inference and NMS
+        bottleneck_inf_stage = max(mean_inf, mean_nms)
+        metrics["FPS_Inference_Only"] = 1.0 / bottleneck_inf_stage if bottleneck_inf_stage > 0 else 0.0
         metrics["Read_ms"] = np.mean(timings["read"]) * 1000
         metrics["Mask_ms"] = np.mean(timings["mask"]) * 1000
         metrics["Prep_ms"] = np.mean(timings["prep"]) * 1000
@@ -556,22 +559,20 @@ def gpumat_to_torch(gpu_mat):
     # export the CuPy array to PyTorch via DLPack
     return torch.from_dlpack(cp_arr.toDlpack())
         
-def gpu_pipeline_worker(input_queue,
-                        output_queue,
-                        model,
-                        imgsz,
-                        stride,
-                        half,
-                        device):
+def preprocessing_worker(input_queue,
+                         prep_queue,
+                         imgsz,
+                         stride,
+                         half,
+                         device):
     """
-    Background worker thread that handles GPU-bound preprocessing and inference.
+    Background worker thread that handles OpenCV data preprocessing.
     Pulls raw frames from the input queue, applies CUDA optical flow and letterboxing,
-    executes the model forward pass, and pushes raw predictions to the output queue.
+    and pushes Pytorch tensors and timing data to the prep_queue.
 
     Args:
         input_queue: Queue object providing raw frames and read times from the camera
-        output_queue: Queue object where processed tensors and events are placed for the CPU
-        model: the loaded TensorRT model
+        prep_queue: Queue object where processed tensors and events are placed for the GPU
         imgsz: target image inference size
         stride: model's maximum stride
         half: specifying whether the data should be FP16
@@ -586,8 +587,8 @@ def gpu_pipeline_worker(input_queue,
         lk_solver = cv2.cuda.SparsePyrLKOpticalFlow.create(winSize = (15, 15), maxLevel = 3)
         gaussian_filter = cv2.cuda.createGaussianFilter(cv2.CV_8UC1, cv2.CV_8UC1, (11, 11), 0)
         
-        # initialise a CUDA stream for the background thread and OpenCV
-        worker_stream = torch.cuda.Stream(device)
+        # initialise a CUDA stream for this thread and OpenCV
+        prep_stream = torch.cuda.Stream(device)
         cv_stream = cv2.cuda_Stream()
         
         # initialise buffers and state variables
@@ -605,7 +606,7 @@ def gpu_pipeline_worker(input_queue,
             
             # if next item is None, video is finished
             if item is None:
-                output_queue.put(None)
+                prep_queue.put(None)
                 break
                 
             # unpack data
@@ -668,22 +669,24 @@ def gpu_pipeline_worker(input_queue,
             blur_frames_gpu = (buffer[0][1], buffer[2][1], buffer[4][1])
             original_dims = (h0, w0)
 
-            target_img_gpu, mask_img_gpu, _, t_mask, t_prep = compute_mask_and_preprocess_cuda(target_frame_gpu,
-                                                                                               blur_frames_gpu,
-                                                                                               imgsz,
-                                                                                               stride,
-                                                                                               lk_solver,
-                                                                                               original_dims,
-                                                                                               ones_gpu,
-                                                                                               pts_prev_cpu,
-                                                                                               pts_prev_gpu,
-                                                                                               cv_stream)
+            target_img_gpu, mask_img_gpu, _, t_mask, t_prep = compute_mask_and_preprocess_cuda(
+                target_frame_gpu,
+                blur_frames_gpu,
+                imgsz,
+                stride,
+                lk_solver,
+                original_dims,
+                ones_gpu,
+                pts_prev_cpu,
+                pts_prev_gpu,
+                cv_stream
+            )
             
             # wait for OpenCV to write the tensor
             cv_stream.waitForCompletion()
             
-            # enable PyTorch to use the worker stream for memory transfer
-            with torch.cuda.stream(worker_stream):
+            # enable PyTorch to use the prep stream for memory transfer
+            with torch.cuda.stream(prep_stream):
                 # zero-copy convert GpuMat to PyTorch Tensor
                 img1_torch = gpumat_to_torch(target_img_gpu)
                 img2_torch = gpumat_to_torch(mask_img_gpu)
@@ -701,17 +704,15 @@ def gpu_pipeline_worker(input_queue,
                 img2 = img2_torch.contiguous().half() if half else img2_torch.contiguous().float()
                 img2 /= 255.0
 
-                # execute prediction and record timings
-                pred, inf_start_evt, inf_end_evt = execute_forward_pass(model, img1, img2, device)
-
-                # copy predictions to avoid them being overwritten by next loop
-                pred = pred.clone()
+                # create an event to signal when PyTorch memory formatting is fully written
+                prep_done_evt = torch.cuda.Event()
+                prep_done_evt.record(prep_stream)
             
-            # package raw tensors and events, push to evaluation queue
+            # package processed images and events, push to evaluation queue
             payload = {
-                "pred": pred,
-                "inf_start_evt": inf_start_evt,
-                "inf_end_evt": inf_end_evt,
+                "img1": img1,
+                "img2": img2,
+                "prep_done_evt": prep_done_evt,
                 "frame_idx": target_frame_idx,
                 "w0": w0,
                 "h0": h0,
@@ -720,12 +721,71 @@ def gpu_pipeline_worker(input_queue,
                 "t_prep": t_prep,
                 "img_shape": img1.shape[2:]
             }
-            output_queue.put(payload)
+            prep_queue.put(payload)
 
     except Exception:
         import traceback
         traceback.print_exc()
-        output_queue.put(None)   # unblock the consumer instead of hanging it
+        prep_queue.put(None)   # unblock the consumer instead of hanging it
+        raise
+
+def inference_worker(prep_queue,
+                     inference_queue,
+                     model,
+                     device):
+    """
+    Worker thread that handles TensorRT inference.
+    Pulls preprocessed images from the prep queue, executes the model,
+    and sends predictions to the inference_queue.
+
+    Args:
+        prep_queue: Queue object with processed images and event timings
+        inference_queue: Queue object where predictions and events are placed for NMS
+        model: the loaded TensorRT model
+        device: specify the device for PyTorch execution
+    """
+    try:
+        inference_stream = torch.cuda.Stream(device)
+        
+        while True:
+            payload = prep_queue.get()
+            
+            if payload is None:
+                inference_queue.put(None)
+                break
+                
+            img1 = payload["img1"]
+            img2 = payload["img2"]
+            prep_done_evt = payload["prep_done_evt"]
+
+            with torch.cuda.stream(inference_stream):
+                # force inference stream to wait for prep stream memory writes
+                inference_stream.wait_event(prep_done_evt)
+                
+                # execute prediction and record timings
+                pred, inf_start_evt, inf_end_evt = execute_forward_pass(model, img1, img2, device)
+
+                # clone prediction tensor to detach it from TensorRT engine memory
+                pred = pred.clone()
+            
+            # package raw tensors and events, push to inference queue
+            payload.update({
+                "pred": pred,
+                "inf_start_evt": inf_start_evt,
+                "inf_end_evt": inf_end_evt,
+            })
+            
+            # remove raw images to prevent memory bloat
+            del payload["img1"]
+            del payload["img2"]
+            del payload["prep_done_evt"]
+            
+            inference_queue.put(payload)
+
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        inference_queue.put(None)   
         raise
 
 def run_inference_directory(video_dir,
@@ -779,7 +839,7 @@ def run_inference_directory(video_dir,
     warmup_model(model, device, half, imgsz, warmup_iterations = 3)
     
     # initialise array for mAP50:90 calculation
-    iou_vector = torch.linspace(0.5, 0.95, 10, device = device)
+    iou_vector = torch.linspace(0.5, 0.95, 10, device = "cpu")
     iou_num = iou_vector.numel()
 
     # initialise list of test videos
@@ -800,18 +860,29 @@ def run_inference_directory(video_dir,
         
         # initialise producer thread
         cap = VideoReader(video_path, queue_size = 30)
+        
+        # specify maximum queue sizes to prevent OOM errors
+        prep_queue = Queue(maxsize = 2)
         eval_queue = Queue(maxsize = 30)
         
-        # initialise GPU consumer thread
-        gpu_thread = Thread(target = gpu_pipeline_worker,
-                            args = (cap.framequeue,
+        # initialise preprocessing thread
+        prep_thread = Thread(target = preprocessing_worker,
+                             args = (cap.framequeue,
+                                     prep_queue,
+                                     imgsz,
+                                     stride,
+                                     half,
+                                     device), daemon=True)
+        prep_thread.start()
+
+        # initialise inference thread
+        inf_thread = Thread(target = inference_worker,
+                            args = (prep_queue,
                                     eval_queue,
                                     model,
-                                    imgsz,
-                                    stride,
-                                    half,
-                                    device), daemon=True)
-        gpu_thread.start()
+                                    device), daemon = True)
+
+        inf_thread.start()
 
         video_inference_count = 0
         video_stats = []
@@ -854,14 +925,16 @@ def run_inference_directory(video_dir,
                 # loudly skip empty frames
                 print(f"Warning: No labels found for frame {payload['frame_idx']:04d}. Skipping frame.")
                 continue
-            # transfer labels to GPU for IoU computation
-            labels = labels.to(device)
+
+            # transfer predictions tensor to CPU memory so NMS runs on CPU cores
+            # and does not compete with GPU TensorRT inference
+            pred_cpu = payload["pred"].detach().cpu()
             
             # conduct non-maximum suppression
             nms_start = time.time()
 
             # execute prediction and record timings
-            pred_nms = non_max_suppression(payload["pred"], conf_thres, iou_thres)[0]            
+            pred_nms = non_max_suppression(pred_cpu, conf_thres, iou_thres)[0]            
             t_nms = time.time() - nms_start
 
             # compute pipeline throughput time for this frame
