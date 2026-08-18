@@ -5,7 +5,7 @@ code assesses class counts across the train and test splits
 
 script also saves class count data in a dynamically named directory at same root as script
 
-target dataset directories are typically: ./<dataset_name>/annotations/<video_name>/<video_frame>.xml
+target dataset directories are typically: ./<dataset_name>/annotations/<video_name>/<video_name>_<frame_number>.xml
 """
 import os
 from collections import Counter
