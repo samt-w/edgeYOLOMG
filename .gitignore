@@ -18,3 +18,8 @@ edge/inference_results/
 # Model training runs
 runs/
 
+edge/~$ARD100_training_data_PTQ_review.xlsx
+data/ptq_calibration_MASKS_tensors_640/
+data/ptq_calibration_RGB_tensors_640/
+data/ptq_calibration_MASKS_tensors_1280/
+data/ptq_calibration_RGB_tensors_1280/
