@@ -175,6 +175,10 @@ def export_engine(model, im, file, train, half, simplify, workspace=4, verbose=F
 
         builder = trt.Builder(logger)
         config = builder.create_builder_config()
+        # ------------------------------------------------------
+        # add verbosity for debugging .engine INT quantisation
+        config.profiling_verbosity = trt.ProfilingVerbosity.DETAILED
+        # ------------------------------------------------------
         # TensorRT 10 compatibility for workspace allocation
         if int(trt.__version__.split('.')[0]) >= 10:
             config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, workspace * 1 << 30)

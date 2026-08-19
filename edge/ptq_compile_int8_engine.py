@@ -132,6 +132,7 @@ def build_int8_engine(onnx_path, engine_path, rgb_dir, mask_dir, imgsz, batch_si
     # instruct TensorRT to read batch size from .onnx file
     network = builder.create_network(1 << int(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH))
     config = builder.create_builder_config()
+    config.profiling_verbosity = trt.ProfilingVerbosity.DETAILED
     parser = trt.OnnxParser(network, TRT_LOGGER)
     
     # allocate workspace memory for TensorRT to use to test algorithms (here,
@@ -160,7 +161,6 @@ def build_int8_engine(onnx_path, engine_path, rgb_dir, mask_dir, imgsz, batch_si
 
     print(f"Building INT8 Engine for {imgsz}px... This will take 10-30 minutes.")
     
-
     # serialise network into a byte stream - split logic to reflect changes in TensorRT 10
     if int(trt.__version__.split('.')[0]) >= 10:
         engine_bytes = builder.build_serialized_network(network, config)

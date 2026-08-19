@@ -1038,9 +1038,12 @@ if __name__ == "__main__":
     TENSORRT_WEIGHTS_1280 = PROJECT_ROOT / "weights/best_1280_jetpack_6-2-3.engine"
     TENSORRT_WEIGHTS_640_MIXED_PRECISION = PROJECT_ROOT / "weights/best_640_jetpack_6-2-3_mixedprecision.engine"
 
+    TENSORRT_WEIGHTS_640_INT8 = PROJECT_ROOT / "weights/best_640_int8.engine"
+    TENSORRT_WEIGHTS_1280_INT8 = PROJECT_ROOT / "weights/best_1280_int8.engine"
+
     run_inference_directory(video_dir = TEST_VIDEOS_DIR_MINIMUM,
                             label_dir = LABEL_DIR,
-                            weights = TENSORRT_WEIGHTS_640,
+                            weights = TENSORRT_WEIGHTS_640_INT8,
                             imgsz = 640, # MUST MATCH COMPILED WEIGHTS/ENGINE IMAGE SIZE
                             device_id = "0",
                             data_yaml = DATA_YAML,
@@ -1048,12 +1051,12 @@ if __name__ == "__main__":
                             iou_thres = 0.4,
                             warmup_frames = 30)
     
-    run_inference_directory(video_dir = TEST_VIDEOS_DIR_MINIMUM,
-                            label_dir = LABEL_DIR,
-                            weights = TENSORRT_WEIGHTS_1280,
-                            imgsz = 1280, # MUST MATCH COMPILED WEIGHTS/ENGINE IMAGE SIZE
-                            device_id = "0",
-                            data_yaml = DATA_YAML,
-                            conf_thres = 0.001,
-                            iou_thres = 0.4,
-                            warmup_frames = 30)
+    # run_inference_directory(video_dir = TEST_VIDEOS_DIR_MINIMUM,
+    #                         label_dir = LABEL_DIR,
+    #                         weights = TENSORRT_WEIGHTS_1280_INT8,
+    #                         imgsz = 1280, # MUST MATCH COMPILED WEIGHTS/ENGINE IMAGE SIZE
+    #                         device_id = "0",
+    #                         data_yaml = DATA_YAML,
+    #                         conf_thres = 0.001,
+    #                         iou_thres = 0.4,
+    #                         warmup_frames = 30)
