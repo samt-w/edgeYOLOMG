@@ -122,7 +122,7 @@ class DualInputCalibrator(trt.IInt8EntropyCalibrator2):
         with open(self.cache_file, "wb") as f:
             f.write(cache)
 
-def build_int8_engine(onnx_path, engine_path, rgb_dir, mask_dir, imgsz, batch_size = 8):
+def build_int8_engine(onnx_path, engine_path, rgb_dir, mask_dir, imgsz, batch_size = 8, strategy = "all_int8"):
     cache_file = f"yolomg_calib_{imgsz}.cache"
     calibrator = DualInputCalibrator(rgb_dir, mask_dir, batch_size, imgsz, cache_file)
     
@@ -159,6 +159,42 @@ def build_int8_engine(onnx_path, engine_path, rgb_dir, mask_dir, imgsz, batch_si
     # attach the calibrator
     config.int8_calibrator = calibrator
 
+    # precision specification strategy
+    if strategy in ["fp16_backbone", "fp16_heads", "fp16_both"]:
+        # instruct TensorRT to obey manual precision specification
+        config.set_flag(trt.BuilderFlag.OBEY_PRECISION_CONSTRAINTS)
+        
+        fp16_prefixes = []
+        if strategy in ["fp16_backbone", "fp16_both"]:
+            # set precision for models 0 through 4
+            fp16_prefixes.extend(["/model.0/", "/model.1/", "/model.2/", "/model.3/", "/model.4/"])
+        if strategy in ["fp16_heads", "fp16_both"]:
+            # set precision for the detection heads
+            fp16_prefixes.append("/model.36/")
+            
+        print(f"Applying FP16 constraints to layers starting with: {fp16_prefixes}")
+
+        for i in range(network.num_layers):
+            layer = network.get_layer(i)
+            # check if layer name begins models designated for FP16 precision
+            if any(layer.name.startswith(prefix) for prefix in fp16_prefixes):
+                
+                # check if layer processes floats (ignore shape/constant integers)
+                is_float_layer = False
+                for j in range(layer.num_outputs):
+                    out_tensor = layer.get_output(j)
+                    if out_tensor is not None and out_tensor.dtype in [trt.float32, trt.float16]:
+                        is_float_layer = True
+                        break
+                
+                # pin layer execution and output tensors to FP16
+                if is_float_layer:
+                    layer.precision = trt.float16
+                    for j in range(layer.num_outputs):
+                        out_tensor = layer.get_output(j)
+                        if out_tensor is not None and out_tensor.dtype in [trt.float32, trt.float16]:
+                            layer.set_output_type(j, trt.float16)
+
     print(f"Building INT8 Engine for {imgsz}px... This will take 10-30 minutes.")
     
     # serialise network into a byte stream - split logic to reflect changes in TensorRT 10
@@ -188,6 +224,7 @@ if __name__ == "__main__":
     parser.add_argument('--mask_dir', type = str, required = True, help = "Path to calibration set Mask .npy directory")
     parser.add_argument('--imgsz', type = int, required = True, choices = [640, 1280], help="Image size (640 or 1280)")
     parser.add_argument('--batch', type = int, default = 8, help = "Calibration batch size")
+    parser.add_argument('--strategy', type = str, default = "all_int8", choices = ["all_int8", "fp16_backbone", "fp16_heads", "fp16_both"], help = "Precision locking strategy")
     
     args = parser.parse_args()
     
@@ -197,5 +234,6 @@ if __name__ == "__main__":
         rgb_dir = args.rgb_dir, 
         mask_dir = args.mask_dir, 
         imgsz = args.imgsz,
-        batch_size = args.batch
+        batch_size = args.batch,
+        strategy = args.strategy
     )
