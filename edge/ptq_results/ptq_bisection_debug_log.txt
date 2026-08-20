@@ -1,0 +1,132 @@
+[W] 'colored' module is not installed, will not use colors when logging. To enable colors, please install the 'colored' module: python3 -m pip install colored
+[I] RUNNING | Command: /usr/local/bin/polygraphy debug precision weights/best_640.onnx --int8 --fp16 --calibration-cache yolomg_calib_640.cache --mode bisect --precision float16 --check polygraphy run polygraphy_debug.engine --trt --load-inputs data/ptq_golden_inputs.json --load-outputs data/ptq_golden_outputs.json --atol 0.05
+[W] Int8 Calibration is using randomly generated input data.
+    This could negatively impact accuracy if the inference-time input data is dissimilar to the randomly generated calibration data.
+    You may want to consider providing real data via the --data-loader-script option.
+[I] TF32 is disabled by default. Turn on TF32 for better performance with minor accuracy differences.
+[W] This version of TensorRT does not support parser.set_builder_config(). Some parser flags like REPORT_CAPABILITY_DLA may not work correctly.
+[I] Using DataType.HALF as higher precision
+[I]     RUNNING | Iteration 1 | Approximately 10 iteration(s) remaining
+[I]     Selecting first 847 layer(s) to run in higher precision
+[W]     Int8 Calibration is using randomly generated input data.
+        This could negatively impact accuracy if the inference-time input data is dissimilar to the randomly generated calibration data.
+        You may want to consider providing real data via the --data-loader-script option.
+[I]     TF32 is disabled by default. Turn on TF32 for better performance with minor accuracy differences.
+[I]     Configuring with profiles:[
+            Profile 0:
+                {images [min=[1, 3, 640, 640], opt=[1, 3, 640, 640], max=[1, 3, 640, 640]],
+                 masks [min=[1, 3, 640, 640], opt=[1, 3, 640, 640], max=[1, 3, 640, 640]]}
+        ]
+[I]     Using calibration profile: {images [min=[1, 3, 640, 640], opt=[1, 3, 640, 640], max=[1, 3, 640, 640]],
+         masks [min=[1, 3, 640, 640], opt=[1, 3, 640, 640], max=[1, 3, 640, 640]]}
+[W]     profileSharing0806 is on by default in TensorRT 10.0. This flag is deprecated and has no effect.
+[I]     Building engine with configuration:
+        Flags                  | [FP16, INT8, OBEY_PRECISION_CONSTRAINTS]
+        Engine Capability      | EngineCapability.STANDARD
+        Memory Pools           | [WORKSPACE: 7607.25 MiB, TACTIC_DRAM: 6875.00 MiB, TACTIC_SHARED_MEMORY: 1024.00 MiB]
+        Tactic Sources         | [EDGE_MASK_CONVOLUTIONS, JIT_CONVOLUTIONS]
+        Profiling Verbosity    | ProfilingVerbosity.DETAILED
+        Preview Features       | [PROFILE_SHARING_0806]
+        Calibrator             | Calibrator(DataLoader(seed=1, iterations=1, val_range=(0.0, 1.0), data_loader_backend_module='numpy'), cache='yolomg_calib_640.cache', BaseClass=<class 'tensorrt.tensorrt.IInt8EntropyCalibrator2'>)
+[I]     Saving calibration cache to yolomg_calib_640.cache
+[W]     Tactic Device request: 800MB Available: 751MB. Device memory is insufficient to use tactic.
+[W]     UNSUPPORTED_STATE: Skipping tactic 0 due to insufficient memory on requested size of 838860800 detected for tactic 0x0000000000000014.
+[W]     UNSUPPORTED_STATE: Skipping tactic 1 due to insufficient memory on requested size of 838860800 detected for tactic 0x0000000000000015.
+[W]     UNSUPPORTED_STATE: Skipping tactic 2 due to insufficient memory on requested size of 838860800 detected for tactic 0x0000000000000016.
+[W]     UNSUPPORTED_STATE: Skipping tactic 3 due to insufficient memory on requested size of 838860800 detected for tactic 0x0000000000000017.
+[W]     UNSUPPORTED_STATE: Skipping tactic 4 due to insufficient memory on requested size of 838860800 detected for tactic 0x0000000000000018.
+[W]     UNSUPPORTED_STATE: Skipping tactic 5 due to insufficient memory on requested size of 838860800 detected for tactic 0x0000000000000019.
+[W]     UNSUPPORTED_STATE: Skipping tactic 6 due to insufficient memory on requested size of 838860800 detected for tactic 0x000000000000001a.
+[W]     UNSUPPORTED_STATE: Skipping tactic 7 due to insufficient memory on requested size of 838860800 detected for tactic 0x000000000000001b.
+[W]     UNSUPPORTED_STATE: Skipping tactic 8 due to insufficient memory on requested size of 838860800 detected for tactic 0x000000000000001e.
+[W]     UNSUPPORTED_STATE: Skipping tactic 9 due to insufficient memory on requested size of 838860800 detected for tactic 0x000000000000001f.
+[W]     Tactic Device request: 800MB Available: 746MB. Device memory is insufficient to use tactic.
+[W]     Tactic Device request: 600MB Available: 538MB. Device memory is insufficient to use tactic.
+[W]     UNSUPPORTED_STATE: Skipping tactic 0 due to insufficient memory on requested size of 629145600 detected for tactic 0x00000000000003e8.
+[W]     UNSUPPORTED_STATE: Skipping tactic 1 due to insufficient memory on requested size of 629145600 detected for tactic 0x00000000000003ea.
+[W]     UNSUPPORTED_STATE: Skipping tactic 2 due to insufficient memory on requested size of 629145600 detected for tactic 0x0000000000000000.
+[I]     Finished engine building in 570.244 seconds
+[I]     Running check command: polygraphy run polygraphy_debug.engine --trt --load-inputs data/ptq_golden_inputs.json --load-outputs data/ptq_golden_outputs.json --atol 0.05
+[I]     ========== CAPTURED STDOUT ==========
+        [W] 'colored' module is not installed, will not use colors when logging. To enable colors, please install the 'colored' module: python3 -m pip install colored
+        [I] RUNNING | Command: /usr/local/bin/polygraphy run polygraphy_debug.engine --trt --load-inputs data/ptq_golden_inputs.json --load-outputs data/ptq_golden_outputs.json --atol 0.05
+        [I] trt-runner-N0-08/20/26-00:20:37     | Activating and starting inference
+        [I] Loading bytes from /workspace/yolomg/polygraphy_debug.engine
+        [I] Loading input data from data/ptq_golden_inputs.json
+        [I] Streaming iteration 0
+            ---- Inference Input(s) ----
+            {images [dtype=float32, shape=(1, 3, 640, 640)],
+             masks [dtype=float32, shape=(1, 3, 640, 640)]}
+        [I] trt-runner-N0-08/20/26-00:20:37    
+            ---- Inference Output(s) ----
+            {output [dtype=float32, shape=(1, 544000, 6)]}
+        [I] Loading inference results from data/ptq_golden_outputs.json
+        [I] Accuracy Comparison | trt-runner-N0-08/20/26-00:20:37 vs. onnxrt-runner-N0-08/20/26-00:10:33
+        [I] Iteration: 0
+        [I]     simple | Comparing Output: 'output' (dtype=float32, shape=(1, 544000, 6)) with 'output' (dtype=float32, shape=(1, 544000, 6))
+        [I]         Tolerance: [abs=0.05, rel=1e-05] | Checking elemwise error
+        [W]         onnxrt-runner-N0-08/20/26-00:10:33  | Output: output: Some values are 0. Will add a small epsilon quantity to these when computing relative difference. Note that this may cause some relative differences to be extremely high. 
+        [I]         Error Metrics: output
+        [I]             Minimum Required Tolerance: elemwise error | [abs=1.3691] OR [rel=1] (requirements may be lower if both abs/rel tolerances are set)
+        [I]             Absolute Difference | Stats: mean=0.019811, std-dev=0.039718, var=0.0015775, median=0.0011983, min=0 at (0, 0, 2), max=1.3691 at (0, 543377, 3), avg-magnitude=0.019811, p90=0.073334, p95=0.10345, p99=0.19611
+        [I]                 ---- Histogram ----
+                            Bin Range      |  Num Elems | Visualization
+                            (0    , 0.137) |    3186225 | ########################################
+                            (0.137, 0.274) |      77503 | 
+                            (0.274, 0.411) |        179 | 
+                            (0.411, 0.548) |         37 | 
+                            (0.548, 0.685) |         22 | 
+                            (0.685, 0.821) |         17 | 
+                            (0.821, 0.958) |         10 | 
+                            (0.958, 1.1  ) |          4 | 
+                            (1.1  , 1.23 ) |          1 | 
+                            (1.23 , 1.37 ) |          2 | 
+        [I]             Relative Difference | Stats: mean=0.003002, std-dev=0.010028, var=0.00010057, median=0.00020064, min=0 at (0, 0, 2), max=1 at (0, 178984, 4), avg-magnitude=0.003002, p90=0.0084034, p95=0.018182, p99=0.04918
+        [I]                 ---- Histogram ----
+                            Bin Range  |  Num Elems | Visualization
+                            (0  , 0.1) |    3260778 | ########################################
+                            (0.1, 0.2) |       2957 | 
+                            (0.2, 0.3) |        180 | 
+                            (0.3, 0.4) |         61 | 
+                            (0.4, 0.5) |          8 | 
+                            (0.5, 0.6) |          4 | 
+                            (0.6, 0.7) |          2 | 
+                            (0.7, 0.8) |          4 | 
+                            (0.8, 0.9) |          0 | 
+                            (0.9, 1  ) |          6 | 
+        [E]         FAILED | Output: 'output' | Difference exceeds tolerance (rel=1e-05, abs=0.05)
+        [E]     FAILED | simple | Mismatched outputs: ['output']
+        [I]     trt-runner-N0-08/20/26-00:20:37: output | Stats: mean=107.95, std-dev=184.06, var=33879, median=3.4043, min=-0.4502 at (0, 447520, 0), max=639.5 at (0, 123839, 0), avg-magnitude=107.95, p90=448.5, p95=544, p99=621
+        [I]         ---- Histogram ----
+                    Bin Range     |  Num Elems | Visualization
+                    (-0.45, 63.6) |    2284699 | ########################################
+                    (63.6 , 128 ) |     108775 | #
+                    (128  , 192 ) |     108446 | #
+                    (192  , 256 ) |     108798 | #
+                    (256  , 320 ) |     109047 | #
+                    (320  , 384 ) |     108702 | #
+                    (384  , 448 ) |     108485 | #
+                    (448  , 512 ) |     109025 | #
+                    (512  , 576 ) |     109196 | #
+                    (576  , 640 ) |     108827 | #
+        [I]     onnxrt-runner-N0-08/20/26-00:10:33: output | Stats: mean=107.94, std-dev=184.06, var=33879, median=3.4053, min=-0.44971 at (0, 447520, 0), max=639.71 at (0, 524559, 0), avg-magnitude=107.94, p90=448.46, p95=544.15, p99=621.01
+        [I]         ---- Histogram ----
+                    Bin Range     |  Num Elems | Visualization
+                    (-0.45, 63.6) |    2284687 | ########################################
+                    (63.6 , 128 ) |     108786 | #
+                    (128  , 192 ) |     108484 | #
+                    (192  , 256 ) |     108811 | #
+                    (256  , 320 ) |     109008 | #
+                    (320  , 384 ) |     108713 | #
+                    (384  , 448 ) |     108497 | #
+                    (448  , 512 ) |     109144 | #
+                    (512  , 576 ) |     109030 | #
+                    (576  , 640 ) |     108840 | #
+        [E] Accuracy Summary | trt-runner-N0-08/20/26-00:20:37 vs. onnxrt-runner-N0-08/20/26-00:10:33 | Passed: 0/1 iterations | Pass Rate: 0.00%
+        [E] FAILED | Runtime: 3.999s | Command: /usr/local/bin/polygraphy run polygraphy_debug.engine --trt --load-inputs data/ptq_golden_inputs.json --load-outputs data/ptq_golden_outputs.json --atol 0.05
+[E]     ========== CAPTURED STDERR ==========
+[I]     Saving debug replay to polygraphy_debug_replay.json
+[E]     FAILED | Iteration 1 | Duration 577.527651309967s
+[E]     Could not find a configuration that satisfied accuracy requirements.
+[I] Finished 1 iteration(s) | Passed: 0/1 | Pass Rate: 0.0%
+[I] PASSED | Runtime: 580.709s | Command: /usr/local/bin/polygraphy debug precision weights/best_640.onnx --int8 --fp16 --calibration-cache yolomg_calib_640.cache --mode bisect --precision float16 --check polygraphy run polygraphy_debug.engine --trt --load-inputs data/ptq_golden_inputs.json --load-outputs data/ptq_golden_outputs.json --atol 0.05

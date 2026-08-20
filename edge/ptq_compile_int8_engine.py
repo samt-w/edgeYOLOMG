@@ -160,7 +160,7 @@ def build_int8_engine(onnx_path, engine_path, rgb_dir, mask_dir, imgsz, batch_si
     config.int8_calibrator = calibrator
 
     # precision specification strategy
-    if strategy in ["fp16_backbone", "fp16_heads", "fp16_both"]:
+    if strategy in ["fp16_backbone", "fp16_heads", "fp16_both", "fp16model6"]:
         # instruct TensorRT to obey manual precision specification
         config.set_flag(trt.BuilderFlag.OBEY_PRECISION_CONSTRAINTS)
         
@@ -168,6 +168,10 @@ def build_int8_engine(onnx_path, engine_path, rgb_dir, mask_dir, imgsz, batch_si
         if strategy in ["fp16_backbone", "fp16_both"]:
             # set precision for models 0 through 4
             fp16_prefixes.extend(["/model.0/", "/model.1/", "/model.2/", "/model.3/", "/model.4/"])
+        if strategy == "fp16model6":
+            # test A: first half of the model (and detection heads) FP16, second half (excluding detection heads) INT8
+            fp16_prefixes.extend([f"/model.{i}/" for i in range(14)])
+            fp16_prefixes.append("/model.36/")
         if strategy in ["fp16_heads", "fp16_both"]:
             # set precision for the detection heads
             fp16_prefixes.append("/model.36/")
@@ -224,7 +228,11 @@ if __name__ == "__main__":
     parser.add_argument('--mask_dir', type = str, required = True, help = "Path to calibration set Mask .npy directory")
     parser.add_argument('--imgsz', type = int, required = True, choices = [640, 1280], help="Image size (640 or 1280)")
     parser.add_argument('--batch', type = int, default = 8, help = "Calibration batch size")
-    parser.add_argument('--strategy', type = str, default = "all_int8", choices = ["all_int8", "fp16_backbone", "fp16_heads", "fp16_both"], help = "Precision locking strategy")
+    parser.add_argument('--strategy', type = str, default = "all_int8", choices = ["all_int8",
+                                                                                   "fp16_backbone",
+                                                                                   "fp16_heads",
+                                                                                   "fp16_both",
+                                                                                   "fp16model6"], help = "Precision locking strategy")
     
     args = parser.parse_args()
     
