@@ -1044,23 +1044,24 @@ if __name__ == "__main__":
     # BEST MIXED-PRECISION TENSORRT .ENGINE (FROM TEST A07)
     # Models 0-13 (before the SPPF) and Model 36 (the detection heads) are in FP16, the rest in INT8
     TENSORRT_WEIGHTS_640_INT8_BEST = PROJECT_ROOT / "weights/best_640_int8_fp16model6.engine"
+    TENSORRT_WEIGHTS_1280_INT8_BEST = PROJECT_ROOT / "weights/best_1280_int8_fp16model6.engine"
 
-    run_inference_directory(video_dir = TEST_VIDEOS_DIR_MINIMUM,
-                            label_dir = LABEL_DIR,
-                            weights = TENSORRT_WEIGHTS_640_INT8_BEST,
-                            imgsz = 640, # MUST MATCH COMPILED WEIGHTS/ENGINE IMAGE SIZE
-                            device_id = "0",
-                            data_yaml = DATA_YAML,
-                            conf_thres = 0.001,
-                            iou_thres = 0.4,
-                            warmup_frames = 30)
-    
     # run_inference_directory(video_dir = TEST_VIDEOS_DIR_MINIMUM,
     #                         label_dir = LABEL_DIR,
-    #                         weights = TENSORRT_WEIGHTS_1280_INT8,
-    #                         imgsz = 1280, # MUST MATCH COMPILED WEIGHTS/ENGINE IMAGE SIZE
+    #                         weights = TENSORRT_WEIGHTS_640_INT8_BEST,
+    #                         imgsz = 640, # MUST MATCH COMPILED WEIGHTS/ENGINE IMAGE SIZE
     #                         device_id = "0",
     #                         data_yaml = DATA_YAML,
     #                         conf_thres = 0.001,
     #                         iou_thres = 0.4,
     #                         warmup_frames = 30)
+    
+    run_inference_directory(video_dir = TEST_VIDEOS_DIR_MINIMUM,
+                            label_dir = LABEL_DIR,
+                            weights = TENSORRT_WEIGHTS_1280_INT8_BEST,
+                            imgsz = 1280, # MUST MATCH COMPILED WEIGHTS/ENGINE IMAGE SIZE
+                            device_id = "0",
+                            data_yaml = DATA_YAML,
+                            conf_thres = 0.001,
+                            iou_thres = 0.4,
+                            warmup_frames = 30)
