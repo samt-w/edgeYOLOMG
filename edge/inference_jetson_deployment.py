@@ -868,9 +868,9 @@ def run_inference_directory(video_dir,
                                                    payload["w0"],
                                                    payload["img_shape"])
 
-            # simulate time spent sending predictions to user 
-            if final_detections is not None:
-                time.sleep(0.002)
+            # # simulate time spent sending predictions to user 
+            # if final_detections is not None:
+            #     time.sleep(0.002)
 
             # compute pipeline throughput time for this frame
             current_time = time.time()
