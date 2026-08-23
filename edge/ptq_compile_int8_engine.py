@@ -169,7 +169,7 @@ def build_int8_engine(onnx_path, engine_path, rgb_dir, mask_dir, imgsz, batch_si
             # set precision for models 0 through 4
             fp16_prefixes.extend(["/model.0/", "/model.1/", "/model.2/", "/model.3/", "/model.4/"])
         if strategy == "fp16model6":
-            # test A: first half of the model (and detection heads) FP16, second half (excluding detection heads) INT8
+            # test A: backbone of the model (and detection heads) FP16, neck INT8
             fp16_prefixes.extend([f"/model.{i}/" for i in range(14)])
             fp16_prefixes.append("/model.36/")
         if strategy in ["fp16_heads", "fp16_both"]:

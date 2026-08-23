@@ -1,7 +1,7 @@
 Run_Group_ID,Device,Video,Num_Frames,Resolution,Conf_Thres,IoU_Thres,Weights,Precision,Recall,mAP@0.5,mAP@0.5:0.95,FPS(Pipeline),FPS(Inference_Only),Read(ms),Mask(ms),Prep(ms),Inference(ms),NMS(ms),Total(ms)
 20260803-195820-YOLOMG-Test-Run,host,OVERALL_SUMMARY,N/A,640,0.001,0.4,runs\train\ARD100_mask32-640_uavs\weights\best.pt,0.7605,0.6358,0.6747,0.2484,10.92,34.36,4.03,55.79,2.17,27.49,1.61,91.55
-YOLOMG-Inference-Run_20260804-162458,host,OVERALL_SUMMARY,N/A,640,0.001,0.4,runs\train\ARD100_mask32-640_uavs\weights\best.pt,0.8791,0.8925,0.9114,0.3735,9.44,26.78,3.73,59.73,3.69,35.91,1.42,105.91
-YOLOMG-Inference-Run_20260804-162933,host,OVERALL_SUMMARY,N/A,640,0.001,0.4,runs\train\ARD100_mask32-640_uavs\weights\best.pt,0.8947,0.9037,0.9185,0.3825,11.25,35.13,3.15,54.1,2.22,26.85,1.62,88.88
+YOLOMG-Inference-Run_20260804-162458,host,OVERALL_SUMMARY,1795,640,0.001,0.4,runs\train\ARD100_mask32-640_uavs\weights\best.pt,0.8791,0.8925,0.9114,0.3735,9.44,26.78,3.73,59.73,3.69,35.91,1.42,105.91
+YOLOMG-Inference-Run_20260804-162933,host,OVERALL_SUMMARY,1795,640,0.001,0.4,runs\train\ARD100_mask32-640_uavs\weights\best.pt,0.8947,0.9037,0.9185,0.3825,11.25,35.13,3.15,54.1,2.22,26.85,1.62,88.88
 YOLOMG-Inference-Run_20260804-175825,host,OVERALL_SUMMARY,N/A,640,0.001,0.4,runs\train\ARD100_mask32-640_uavs\weights\best.pt,0.8947,0.9037,0.9185,0.3825,14.37,39.22,2.87,31.74,2.13,24.20,1.29,69.59
 YOLOMG-Inference-Run_20260804-182900,host,OVERALL_SUMMARY,N/A,640,0.001,0.4,runs\train\ARD100_mask32-640_uavs\weights\best.pt,0.8947,0.9037,0.9185,0.3825,14.97,39.20,0.02,31.68,2.10,24.24,1.26,66.80
 YOLOMG-Inference-Run_20260804-185438,host,OVERALL_SUMMARY,N/A,640,0.001,0.4,runs\train\ARD100_mask32-640_uavs\weights\best.pt,0.8947,0.9037,0.9185,0.3825,14.96,39.46,0.02,31.89,1.91,24.05,1.30,66.84
