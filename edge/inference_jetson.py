@@ -7,6 +7,8 @@ in video input. It measures the performance of the detection using mAP and FPS.
 """
 
 import sys
+import gc
+import resource
 from pathlib import Path
 
 # add repo root filepath dynamically to import modules from other directories
@@ -373,23 +375,37 @@ def calculate_metrics(timings,
     
     # accuracy/mAP calculation
     if not stats:
-        print("\nNo targets or predictions found. Cannot calculate mAP.")
+        if run_config.get("video_name") == "OVERALL_SUMMARY" and "video_mAPs_50" in run_config:
+            # Compute macro-averages from the collected lists
+            metrics["Precision"] = np.mean(run_config["video_precisions"]) if run_config["video_precisions"] else 0.0
+            metrics["Recall"] = np.mean(run_config["video_recalls"]) if run_config["video_recalls"] else 0.0
+            metrics["mAP_50"] = np.mean(run_config["video_mAPs_50"]) if run_config["video_mAPs_50"] else 0.0
+            metrics["mAP_50_95"] = np.mean(run_config["video_mAPs_50_95"]) if run_config["video_mAPs_50_95"] else 0.0
+
+            if len(run_config["video_mAPs_50"]) > 1:
+                metrics["mAP_50_std"] = np.std(run_config["video_mAPs_50"], ddof = 1)
+                metrics["mAP_50_95_std"] = np.std(run_config["video_mAPs_50_95"], ddof = 1)
+            
+            print("\nAccuracy Metrics:")
+            print(f"Precision:    {metrics['Precision']:.4f}")
+            print(f"Recall:       {metrics['Recall']:.4f}")
+            print(f"mAP@0.5:      {metrics['mAP_50']:.4f}")
+            print(f"mAP@0.5:0.95: {metrics['mAP_50_95']:.4f}")
+        else:
+            print("\nNo targets or predictions found. Cannot calculate mAP.")
+
     else:
-        # convert stats tuples into arrays
+        # process individual video stats
         stats_combined = [np.concatenate(x, 0) for x in zip(*stats)]
         if len(stats_combined) and stats_combined[0].any():
-            # compute precision, recall, and AP per class
             tp, fp, p, r, f1, ap, ap_class = ap_per_class(*stats_combined,
                                                           plot = False,
                                                           save_dir = Path(""),
                                                           names = names)
             
-            # AP at IoU 0.5
             ap50 = ap[:, 0]
-            # AP averaged across IoU 0.5 to 0.95
             ap_095 = ap.mean(1)
             
-            # compute mean over all classes
             metrics["Precision"] = p.mean()
             metrics["Recall"] = r.mean()
             metrics["mAP_50"] = ap50.mean()
@@ -409,6 +425,10 @@ def calculate_metrics(timings,
     
     print("="*40)
 
+    # compute maximum RAM usage for current process
+    max_ram_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
+    print(f"Maximum RAM Utilisation: {max_ram_mb:.2f} MB")
+
     # Save results to CSV
     output_dir = run_config["output_dir"]
     csv_file = output_dir / f"{run_config['run_group_id']}_inference-results.csv"
@@ -419,7 +439,7 @@ def calculate_metrics(timings,
         "Precision", "Recall", "mAP@0.5", "mAP@0.5:0.95", 
         "FPS(Pipeline)", "FPS(Inference_Only)", 
         "Read(ms)", "Mask(ms)", "Prep(ms)", "Inference(ms)", "NMS(ms)", "Total(ms)",
-        "mAP@0.5_std", "mAP@0.5:0.95_std", "Total(ms)_std"
+        "mAP@0.5_std", "mAP@0.5:0.95_std", "Total(ms)_std", "Peak_RAM(MB)"
     ]
     
     row_data = [
@@ -445,7 +465,8 @@ def calculate_metrics(timings,
         f"{metrics['Total_ms']:.2f}",
         f"{metrics['mAP_50_std']:.4f}",
         f"{metrics['mAP_50_95_std']:.4f}",
-        f"{metrics['Total_ms_std']:.2f}"
+        f"{metrics['Total_ms_std']:.2f}",
+        f"{max_ram_mb:.2f}"
     ]
     
     with open(csv_file, mode="a", newline="") as f:
@@ -816,10 +837,11 @@ def run_inference_directory(video_dir,
 
     # initialise empty structures for overall performance summary
     overall_timings = {"total": [], "read": [], "mask": [], "prep": [], "inf": [], "nms": []}
-    overall_stats = []
     overall_inference_count = 0
     overall_mAPs_50 = []
     overall_mAPs_50_95 = []
+    overall_precisions = []
+    overall_recalls = []
 
     for video_path in video_files:
         video_name = video_path.stem
@@ -876,6 +898,11 @@ def run_inference_directory(video_dir,
             # load Labels (extract original image dimensions from buffer)
             label_path = label_dir / f"{video_name}_{payload['frame_idx']:04d}.txt"
             labels, true_class_indices = load_labels(label_path, payload["h0"], payload["w0"])
+            
+            if len(labels) == 0:
+                # loudly skip empty frames
+                print(f"Warning: No labels found for frame {payload['frame_idx']:04d}. Skipping frame.")
+                continue
             
             # transfer labels to GPU for IoU computation
             labels = labels.to(device)
@@ -953,11 +980,23 @@ def run_inference_directory(video_dir,
         if video_stats:
             overall_mAPs_50.append(video_metrics["mAP_50"])
             overall_mAPs_50_95.append(video_metrics["mAP_50_95"])
+            overall_precisions.append(video_metrics["Precision"])
+            overall_recalls.append(video_metrics["Recall"])
         # add metrics to overall summary
         for key in overall_timings:
             overall_timings[key].extend(video_timings[key])
-        overall_stats.extend(video_stats)
+
         overall_inference_count += video_inference_count
+
+        # wipe objects to prevent OOM errors
+        del video_stats
+        del video_timings
+        del cap
+        del eval_queue
+        
+        gc.collect()
+        if device.type != "cpu":
+            torch.cuda.empty_cache()
 
     # calculate metrics for the overall summary
     if overall_inference_count > 0:
@@ -966,7 +1005,9 @@ def run_inference_directory(video_dir,
         summary_config["video_name"] = "OVERALL_SUMMARY"
         summary_config["video_mAPs_50"] = overall_mAPs_50
         summary_config["video_mAPs_50_95"] = overall_mAPs_50_95
-        calculate_metrics(overall_timings, overall_stats, names_dict, overall_inference_count, summary_config)
+        summary_config["video_precisions"] = overall_precisions
+        summary_config["video_recalls"] = overall_recalls
+        calculate_metrics(overall_timings, [], names_dict, overall_inference_count, summary_config)
 
     # upload updated inference_results.csv to ClearML as an artifact
     output_dir = Path(__file__).resolve().parent / "inference_results"
