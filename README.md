@@ -1,5 +1,5 @@
-# YOLOMG-STW
-This is an adapted repo, cloned from the 'YOLOMG' repo, for Sam Taylor-Wilmshurst's MSc project at Birkbeck College. 
+# edgeYOLOMG
+This is an adapted repo, cloned from the 'YOLOMG' repo, for an MSc Project. 
 
 This is a model trying to detect UAVs in video data. The original YOLOMG model was adapted from YOLOv5s. It added a motion-masking classical computer vision algorithm.
 
