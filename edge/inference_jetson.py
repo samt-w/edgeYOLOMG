@@ -178,6 +178,7 @@ def execute_forward_pass(model,
             # the prediction tensor onwards
             if isinstance(pred, (list, tuple)):
                 pred = pred[0]
+            pred = pred.clone()
 
         # end timing inference
         end_inf.record()
@@ -332,15 +333,19 @@ def calculate_metrics(timings,
         "Inf_ms": 0.0,
         "NMS_ms": 0.0,
         "Total_ms": 0.0,
+        "Total_ms_std": 0.0,
         "Precision": 0.0,
         "Recall": 0.0,
         "mAP_50": 0.0,
-        "mAP_50_95": 0.0
+        "mAP_50_std": 0.0,
+        "mAP_50_95": 0.0,
+        "mAP_50_95_std": 0.0
     }
     
     # latency/FPS calculation
     if len(timings["total"]) > 0:
         mean_total = np.mean(timings["total"])
+        std_total = np.std(timings["total"], ddof = 1)
         mean_inf = np.mean(timings["inf"])
         mean_nms = np.mean(timings["nms"])
         metrics["FPS_Full_Pipeline"] = 1.0 / mean_total
@@ -351,6 +356,7 @@ def calculate_metrics(timings,
         metrics["Inf_ms"] = mean_inf * 1000
         metrics["NMS_ms"] = mean_nms * 1000
         metrics["Total_ms"] = mean_total * 1000
+        metrics["Total_ms_std"] = std_total * 1000
 
         print(f"Total number of Processed Frames: {inference_count}")
         print(f"Effective Real-Time FPS: {metrics['FPS_Full_Pipeline']:.2f} FPS")
@@ -388,6 +394,10 @@ def calculate_metrics(timings,
             metrics["Recall"] = r.mean()
             metrics["mAP_50"] = ap50.mean()
             metrics["mAP_50_95"] = ap_095.mean()
+
+            if "video_mAPs_50" in run_config and len(run_config["video_mAPs_50"]) > 0:
+                metrics["mAP_50_std"] = np.std(run_config["video_mAPs_50"], ddof = 1)
+                metrics["mAP_50_95_std"] = np.std(run_config["video_mAPs_50_95"], ddof = 1)
             
             print("\nAccuracy Metrics:")
             print(f"Precision:    {metrics['Precision']:.4f}")
@@ -408,7 +418,8 @@ def calculate_metrics(timings,
         "Run_Group_ID", "Device", "Video", "Num_Frames", "Resolution", "Conf_Thres", "IoU_Thres", "Weights",
         "Precision", "Recall", "mAP@0.5", "mAP@0.5:0.95", 
         "FPS(Pipeline)", "FPS(Inference_Only)", 
-        "Read(ms)", "Mask(ms)", "Prep(ms)", "Inference(ms)", "NMS(ms)", "Total(ms)"
+        "Read(ms)", "Mask(ms)", "Prep(ms)", "Inference(ms)", "NMS(ms)", "Total(ms)",
+        "mAP@0.5_std", "mAP@0.5:0.95_std", "Total(ms)_std"
     ]
     
     row_data = [
@@ -431,7 +442,10 @@ def calculate_metrics(timings,
         f"{metrics['Prep_ms']:.2f}",
         f"{metrics['Inf_ms']:.2f}",
         f"{metrics['NMS_ms']:.2f}",
-        f"{metrics['Total_ms']:.2f}"
+        f"{metrics['Total_ms']:.2f}",
+        f"{metrics['mAP_50_std']:.4f}",
+        f"{metrics['mAP_50_95_std']:.4f}",
+        f"{metrics['Total_ms_std']:.2f}"
     ]
     
     with open(csv_file, mode="a", newline="") as f:
@@ -454,6 +468,8 @@ def calculate_metrics(timings,
             writer.writerow(row_data)
             
         print(f"Overall summary appended to {master_csv_file.resolve()}")
+    
+    return metrics
 
 # initialise reader class to queue frames for GPU
 class VideoReader:
@@ -464,16 +480,26 @@ class VideoReader:
         # GStreamer pipeline for Jetson hardware decoding:
         # nvvidconv: hardware-accelerated memory/format conversion to BGRx
         # videoconvert: CPU conversion to standard BGR for OpenCV compatibility
-        gst_pipeline = (
+        # first attempt H.264 decoding
+        gst_pipeline_h264 = (
             f"filesrc location={video_filepath_abs} ! "
             "qtdemux ! h264parse ! nvv4l2decoder ! "
             "nvvidconv ! video/x-raw, format=BGRx ! "
             "videoconvert ! video/x-raw, format=BGR ! "
             "appsink sync=false"
         )
+        self.videocap = cv2.VideoCapture(gst_pipeline_h264, cv2.CAP_GSTREAMER)
 
-        # attempt to initialise hardware-accelerated reading
-        self.videocap = cv2.VideoCapture(gst_pipeline, cv2.CAP_GSTREAMER)
+        # if H.264 fails, attempt H.265
+        if not self.videocap.isOpened():
+            gst_pipeline_h265 = (
+                f"filesrc location={video_filepath_abs} ! "
+                "qtdemux ! h265parse ! nvv4l2decoder ! "
+                "nvvidconv ! video/x-raw, format=BGRx ! "
+                "videoconvert ! video/x-raw, format=BGR ! "
+                "appsink sync=false"
+            )
+            self.videocap = cv2.VideoCapture(gst_pipeline_h265, cv2.CAP_GSTREAMER)
         
         # fallback mechanism: check if GStreamer opened successfully
         if not self.videocap.isOpened():
@@ -556,20 +582,22 @@ def gpumat_to_torch(gpu_mat):
     # export the CuPy array to PyTorch via DLPack
     return torch.from_dlpack(cp_arr.toDlpack())
         
-def preprocessing_worker(input_queue,
-                         prep_queue,
-                         imgsz,
-                         stride,
-                         half,
-                         device):
+def gpu_pipeline_worker(input_queue,
+                        output_queue,
+                        model,
+                        imgsz,
+                        stride,
+                        half,
+                        device):
     """
-    Background worker thread that handles OpenCV data preprocessing.
+    Background worker thread that handles GPU-bound preprocessing and inference.
     Pulls raw frames from the input queue, applies CUDA optical flow and letterboxing,
-    and pushes Pytorch tensors and timing data to the prep_queue.
+    executes the model forward pass, and pushes raw predictions to the output queue.
 
     Args:
         input_queue: Queue object providing raw frames and read times from the camera
-        prep_queue: Queue object where processed tensors and events are placed for the GPU
+        output_queue: Queue object where processed tensors and events are placed for the CPU
+        model: the loaded TensorRT model
         imgsz: target image inference size
         stride: model's maximum stride
         half: specifying whether the data should be FP16
@@ -584,8 +612,8 @@ def preprocessing_worker(input_queue,
         lk_solver = cv2.cuda.SparsePyrLKOpticalFlow.create(winSize = (15, 15), maxLevel = 3)
         gaussian_filter = cv2.cuda.createGaussianFilter(cv2.CV_8UC1, cv2.CV_8UC1, (11, 11), 0)
         
-        # initialise a CUDA stream for this thread and OpenCV
-        prep_stream = torch.cuda.Stream(device)
+        # initialise a CUDA stream for the background thread and OpenCV
+        worker_stream = torch.cuda.Stream(device)
         cv_stream = cv2.cuda_Stream()
         
         # initialise buffers and state variables
@@ -603,7 +631,7 @@ def preprocessing_worker(input_queue,
             
             # if next item is None, video is finished
             if item is None:
-                prep_queue.put(None)
+                output_queue.put(None)
                 break
                 
             # unpack data
@@ -682,8 +710,8 @@ def preprocessing_worker(input_queue,
             # wait for OpenCV to write the tensor
             cv_stream.waitForCompletion()
             
-            # enable PyTorch to use the prep stream for memory transfer
-            with torch.cuda.stream(prep_stream):
+            # enable PyTorch to use the worker stream for memory transfer
+            with torch.cuda.stream(worker_stream):
                 # zero-copy convert GpuMat to PyTorch Tensor
                 img1_torch = gpumat_to_torch(target_img_gpu)
                 img2_torch = gpumat_to_torch(mask_img_gpu)
@@ -701,15 +729,14 @@ def preprocessing_worker(input_queue,
                 img2 = img2_torch.contiguous().half() if half else img2_torch.contiguous().float()
                 img2 /= 255.0
 
-                # create an event to signal when PyTorch memory formatting is fully written
-                prep_done_evt = torch.cuda.Event()
-                prep_done_evt.record(prep_stream)
+                # execute prediction and record timings
+                pred, inf_start_evt, inf_end_evt = execute_forward_pass(model, img1, img2, device)
             
-            # package processed images and events, push to evaluation queue
+            # package raw tensors and events, push to evaluation queue
             payload = {
-                "img1": img1,
-                "img2": img2,
-                "prep_done_evt": prep_done_evt,
+                "pred": pred,
+                "inf_start_evt": inf_start_evt,
+                "inf_end_evt": inf_end_evt,
                 "frame_idx": target_frame_idx,
                 "w0": w0,
                 "h0": h0,
@@ -718,71 +745,12 @@ def preprocessing_worker(input_queue,
                 "t_prep": t_prep,
                 "img_shape": img1.shape[2:]
             }
-            prep_queue.put(payload)
+            output_queue.put(payload)
 
     except Exception:
         import traceback
         traceback.print_exc()
-        prep_queue.put(None)   # unblock the consumer instead of hanging it
-        raise
-
-def inference_worker(prep_queue,
-                     inference_queue,
-                     model,
-                     device):
-    """
-    Worker thread that handles TensorRT inference.
-    Pulls preprocessed images from the prep queue, executes the model,
-    and sends predictions to the inference_queue.
-
-    Args:
-        prep_queue: Queue object with processed images and event timings
-        inference_queue: Queue object where predictions and events are placed for NMS
-        model: the loaded TensorRT model
-        device: specify the device for PyTorch execution
-    """
-    try:
-        inference_stream = torch.cuda.Stream(device)
-        
-        while True:
-            payload = prep_queue.get()
-            
-            if payload is None:
-                inference_queue.put(None)
-                break
-                
-            img1 = payload["img1"]
-            img2 = payload["img2"]
-            prep_done_evt = payload["prep_done_evt"]
-
-            with torch.cuda.stream(inference_stream):
-                # force inference stream to wait for prep stream memory writes
-                inference_stream.wait_event(prep_done_evt)
-                
-                # execute prediction and record timings
-                pred, inf_start_evt, inf_end_evt = execute_forward_pass(model, img1, img2, device)
-
-                # clone prediction tensor to detach it from TensorRT engine memory
-                pred = pred.clone()
-            
-            # package raw tensors and events, push to inference queue
-            payload.update({
-                "pred": pred,
-                "inf_start_evt": inf_start_evt,
-                "inf_end_evt": inf_end_evt,
-            })
-            
-            # remove raw images to prevent memory bloat
-            del payload["img1"]
-            del payload["img2"]
-            del payload["prep_done_evt"]
-            
-            inference_queue.put(payload)
-
-    except Exception:
-        import traceback
-        traceback.print_exc()
-        inference_queue.put(None)   
+        output_queue.put(None)   # unblock the consumer instead of hanging it
         raise
 
 def run_inference_directory(video_dir,
@@ -850,6 +818,8 @@ def run_inference_directory(video_dir,
     overall_timings = {"total": [], "read": [], "mask": [], "prep": [], "inf": [], "nms": []}
     overall_stats = []
     overall_inference_count = 0
+    overall_mAPs_50 = []
+    overall_mAPs_50_95 = []
 
     for video_path in video_files:
         video_name = video_path.stem
@@ -857,29 +827,18 @@ def run_inference_directory(video_dir,
         
         # initialise producer thread
         cap = VideoReader(video_path, queue_size = 30)
-        
-        # specify maximum queue sizes to prevent OOM errors
-        prep_queue = Queue(maxsize = 2)
         eval_queue = Queue(maxsize = 30)
         
-        # initialise preprocessing thread
-        prep_thread = Thread(target = preprocessing_worker,
-                             args = (cap.framequeue,
-                                     prep_queue,
-                                     imgsz,
-                                     stride,
-                                     half,
-                                     device), daemon=True)
-        prep_thread.start()
-
-        # initialise inference thread
-        inf_thread = Thread(target = inference_worker,
-                            args = (prep_queue,
+        # initialise GPU consumer thread
+        gpu_thread = Thread(target = gpu_pipeline_worker,
+                            args = (cap.framequeue,
                                     eval_queue,
                                     model,
-                                    device), daemon = True)
-
-        inf_thread.start()
+                                    imgsz,
+                                    stride,
+                                    half,
+                                    device), daemon=True)
+        gpu_thread.start()
 
         video_inference_count = 0
         video_stats = []
@@ -918,11 +877,6 @@ def run_inference_directory(video_dir,
             label_path = label_dir / f"{video_name}_{payload['frame_idx']:04d}.txt"
             labels, true_class_indices = load_labels(label_path, payload["h0"], payload["w0"])
             
-            if len(labels) == 0:
-                # loudly skip empty frames
-                print(f"Warning: No labels found for frame {payload['frame_idx']:04d}. Skipping frame.")
-                continue
-
             # transfer labels to GPU for IoU computation
             labels = labels.to(device)
             
@@ -993,7 +947,12 @@ def run_inference_directory(video_dir,
 
         # compute and display metrics
         names_dict = dict(enumerate(names))
-        calculate_metrics(video_timings, video_stats, names_dict, video_inference_count, run_config)
+        video_metrics = calculate_metrics(video_timings, video_stats, names_dict, video_inference_count, run_config)
+        
+        # store the video mAP to compute overall standard deviation later
+        if video_stats:
+            overall_mAPs_50.append(video_metrics["mAP_50"])
+            overall_mAPs_50_95.append(video_metrics["mAP_50_95"])
         # add metrics to overall summary
         for key in overall_timings:
             overall_timings[key].extend(video_timings[key])
@@ -1005,6 +964,8 @@ def run_inference_directory(video_dir,
         print("\n=== COMPUTING OVERALL TEST RUN SUMMARY ===")
         summary_config = run_config.copy()
         summary_config["video_name"] = "OVERALL_SUMMARY"
+        summary_config["video_mAPs_50"] = overall_mAPs_50
+        summary_config["video_mAPs_50_95"] = overall_mAPs_50_95
         calculate_metrics(overall_timings, overall_stats, names_dict, overall_inference_count, summary_config)
 
     # upload updated inference_results.csv to ClearML as an artifact
@@ -1036,6 +997,7 @@ if __name__ == "__main__":
     # TensorRT engine files compiled from .pt weights
     TENSORRT_WEIGHTS_640 = PROJECT_ROOT / "weights/best_640_jetpack_6-2-3.engine"
     TENSORRT_WEIGHTS_1280 = PROJECT_ROOT / "weights/best_1280_jetpack_6-2-3.engine"
+
     TENSORRT_WEIGHTS_640_MIXED_PRECISION = PROJECT_ROOT / "weights/best_640_jetpack_6-2-3_mixedprecision.engine"
 
     TENSORRT_WEIGHTS_640_INT8 = PROJECT_ROOT / "weights/best_640_int8.engine"
@@ -1046,17 +1008,17 @@ if __name__ == "__main__":
     TENSORRT_WEIGHTS_640_INT8_BEST = PROJECT_ROOT / "weights/best_640_int8_fp16model6.engine"
     TENSORRT_WEIGHTS_1280_INT8_BEST = PROJECT_ROOT / "weights/best_1280_int8_fp16model6.engine"
 
-    # run_inference_directory(video_dir = TEST_VIDEOS_DIR_MINIMUM,
-    #                         label_dir = LABEL_DIR,
-    #                         weights = TENSORRT_WEIGHTS_640_INT8_BEST,
-    #                         imgsz = 640, # MUST MATCH COMPILED WEIGHTS/ENGINE IMAGE SIZE
-    #                         device_id = "0",
-    #                         data_yaml = DATA_YAML,
-    #                         conf_thres = 0.001,
-    #                         iou_thres = 0.4,
-    #                         warmup_frames = 30)
+    run_inference_directory(video_dir = TEST_VIDEOS_DIR,
+                            label_dir = LABEL_DIR,
+                            weights = TENSORRT_WEIGHTS_640_INT8_BEST,
+                            imgsz = 640, # MUST MATCH COMPILED WEIGHTS/ENGINE IMAGE SIZE
+                            device_id = "0",
+                            data_yaml = DATA_YAML,
+                            conf_thres = 0.001,
+                            iou_thres = 0.4,
+                            warmup_frames = 30)
     
-    run_inference_directory(video_dir = TEST_VIDEOS_DIR_MINIMUM,
+    run_inference_directory(video_dir = TEST_VIDEOS_DIR,
                             label_dir = LABEL_DIR,
                             weights = TENSORRT_WEIGHTS_1280_INT8_BEST,
                             imgsz = 1280, # MUST MATCH COMPILED WEIGHTS/ENGINE IMAGE SIZE
