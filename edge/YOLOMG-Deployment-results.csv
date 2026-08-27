@@ -1,3 +1,7 @@
-Run_Group_ID,Device,Video,Num_Frames,Resolution,Conf_Thres,Weights,FPS(Pipeline),FPS(Inference_Only),Read(ms),Mask(ms),Prep(ms),Inference(ms),NMS(ms),Total(ms)
-YOLOMG-Inference-Run_20260820-193350,edge,OVERALL_SUMMARY,1795,640,0.25,weights/best_640_int8_fp16model6.engine,20.80,24.00,0.98,35.08,3.57,28.05,13.62,48.08
-YOLOMG-Inference-Run_20260820-230634,edge,OVERALL_SUMMARY,1795,640,0.25,weights/best_640_int8_fp16model6.engine,23.75,26.93,1.16,32.69,2.12,27.26,9.87,42.11
+Run_Group_ID,Device,Video,Num_Frames,Resolution,Conf_Thres,IoU_Thres,Weights,FPS(Pipeline),FPS(Inference_Only),Read(ms),Mask(ms),Prep(ms),Inference(ms),NMS(ms),Total(ms),Max_Ram(MB)
+YOLOMG-Inference-Run_20260820-193350,edge,OVERALL_SUMMARY,1795,640,0.25,0.4,weights/best_640_int8_fp16model6.engine,20.80,24.00,0.98,35.08,3.57,28.05,13.62,48.08
+YOLOMG-Inference-Run_20260820-230634,edge,OVERALL_SUMMARY,1795,640,0.25,0.4,weights/best_640_int8_fp16model6.engine,23.75,26.93,1.16,32.69,2.12,27.26,9.87,42.11
+YOLOMG-Inference-Run_20260827-144949,edge,OVERALL_SUMMARY,3590,640,0.25,0.4,weights/best_640_int8_fp16model6.engine,23.24,30.51,1.21,13.34,1.96,23.63,9.15,43.03,2416.62
+YOLOMG-Inference-Run_20260827-145247,edge,OVERALL_SUMMARY,3590,1280,0.25,0.4,weights/best_1280_int8_fp16model6.engine,8.90,10.23,1.52,15.93,3.96,85.98,11.74,112.38,2976.46
+YOLOMG-Inference-Run_20260827-150513,edge,OVERALL_SUMMARY,72520,640,0.25,0.4,weights/best_640_int8_fp16model6.engine,21.02,31.26,1.15,14.97,3.33,23.62,8.37,47.58,2393.33
+YOLOMG-Inference-Run_20260827-160332,edge,OVERALL_SUMMARY,72520,1280,0.25,0.4,weights/best_1280_int8_fp16model6.engine,8.42,10.26,1.20,17.14,7.66,85.97,11.50,118.78,3060.18

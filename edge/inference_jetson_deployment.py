@@ -932,7 +932,7 @@ if __name__ == "__main__":
     TENSORRT_WEIGHTS_640_INT8_BEST = PROJECT_ROOT / "weights/best_640_int8_fp16model6.engine"
     TENSORRT_WEIGHTS_1280_INT8_BEST = PROJECT_ROOT / "weights/best_1280_int8_fp16model6.engine"
 
-    run_inference_directory(video_dir = TEST_VIDEOS_DIR_MINIMUM,
+    run_inference_directory(video_dir = TEST_VIDEOS_DIR,
                             label_dir = LABEL_DIR,
                             weights = TENSORRT_WEIGHTS_640_INT8_BEST,
                             imgsz = 640, # MUST MATCH COMPILED WEIGHTS/ENGINE IMAGE SIZE
@@ -942,7 +942,7 @@ if __name__ == "__main__":
                             iou_thres = 0.4,
                             warmup_frames = 30)
     
-    run_inference_directory(video_dir = TEST_VIDEOS_DIR_MINIMUM,
+    run_inference_directory(video_dir = TEST_VIDEOS_DIR,
                             label_dir = LABEL_DIR,
                             weights = TENSORRT_WEIGHTS_1280_INT8_BEST,
                             imgsz = 1280, # MUST MATCH COMPILED WEIGHTS/ENGINE IMAGE SIZE
