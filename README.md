@@ -1,63 +1,104 @@
 # edgeYOLOMG
-This is an adapted repo, cloned from the 'YOLOMG' repo, for an MSc Project. 
 
-This is a model trying to detect UAVs in video data. The original YOLOMG model was adapted from YOLOv5s. It added a motion-masking classical computer vision algorithm.
+This is an adapted repo, cloned from the [YOLOMG](https://github.com/Irisky123/YOLOMG) repo, for an MSc Project.
 
-This project aims to run YOLOMG on edge hardware (a NVIDIA Jetson Orin Nano) to see whether the algorithm's high mAP and FPS can be maintained on constrained hardware.
+This is a model trying to detect UAVs in video data. The original YOLOMG model was adapted from YOLOv5s, adding a motion-masking classical computer vision algorithm.
 
-# Dataset
-The dataset is the ARD100 dataset, created by the original researchers, which can be found here:
-- [BaiduYun](https://pan.baidu.com/s/1ycAoKbzQ1rlzvKr8VRakgw?pwd=1x2z ) (code:1x2z)
+This project aims to run YOLOMG on edge hardware (an NVIDIA Jetson Orin Nano) to see whether the algorithm's high mAP and FPS can be maintained on constrained hardware.
 
-![Dataset Example Images](data/ARD100_samples_show.png "Example Images ")
+Full step-by-step instructions (including environment setup, RunPod cloud training, and Jetson-specific commands) are in the project report's software appendix. This README is a quick-reference summary.
 
-# Repo Structure
+## Dataset
 
-YOLOMG-STW/   
-├── cloud/                     # scripts for running training in cloud  
-├── data/                      # scripts with model training data filepaths  
-├── data_prep_scripts/         # scripts for generating and formatting the dataset  
-├── edge/                      # scripts for exporting .pt models and running inference on edge device  
-├── models/                    # network architecture .yaml documents and core PyTorch modules  
-└── utils/                     # core dependencies for YOLO model, such as dataloaders, loss functions, and metrics  
+The dataset is the ARD100 dataset, created by the original researchers:
+- [BaiduYun](https://pan.baidu.com/s/1ycAoKbzQ1rlzvKr8VRakgw?pwd=1x2z) (code: 1x2z)
 
-.env.sanitised contains the global variables that need to be completed by the user in order to run the code  
-config.py sets the global variables as paths for scripts to use  
+![Dataset Example Images](data/ARD100_samples_show.png "Example Images")
 
-## scripts for pre-processing and labelling the datasets are in ./data_prep_scripts/
-```python generate_motion_masks.py```
-* this is applied to generate the motion masks from the video files
+## Repo Structure
 
-```python extract_frames.py```
-* this is used to extract the RGB image frames
+```
+edgeYOLOMG/
+├── cloud/                 # scripts for running training in the cloud (RunPod)
+├── data/                  # dataset config, PTQ calibration set scripts
+├── data_prep_scripts/     # scripts for preprocessing/labelling the dataset
+├── edge/                  # export, PTQ, and inference scripts for the Jetson/host
+├── models/                # network architecture .yaml files and core PyTorch modules
+├── utils/                 # YOLO dependencies (dataloaders, loss functions, metrics)
+└── weights/               # trained .pt/.onnx/.engine model weights
+```
 
-```python generate_dataset.py```
-* this is used to generate train/test datasets from the extracted RGB frames and motion masks. It splits the data based on video IDs rather than by random frames.
+`.env.sanitised` lists the environment variables (filepaths and API credentials) needed to run the code. It must be copied to `.env` and completed before running any code. `config.py` reads `.env` and derives the filepaths used throughout the pipeline.
 
-```python generate_txts.py```
-* this creates the necessary .txt files for the .yaml config for training
+## 1. Data Extraction and Preprocessing
 
-```python3 split_train_val.py --xml_path xx/xxx/Annotations --txt_path xx/xxx/ImageSets/Main```
-* this is used to read the XML annotation files and then split the data into training and validation sets. It then saves the resulting list of filenames into the target directory
+Converts raw ARD100 videos/annotations into RGB frame, motion-mask, and YOLO-label triplets.
 
-```python3 voc2yolo.py```
-* this converts the PASCAL VOC XML bounding box annotations into YOLO TXT format
+```bash
+pip install -r requirements.txt
+cd data_prep_scripts
+python data_prep_pipeline_test.py   # quick end-to-end check (6 videos)
+python data_prep_pipeline_full.py   # full dataset
+```
 
-```python3 voc_label.py```
-* this generates the text files with the file paths for the RGB images (e.g. ...\train.txt, ...\val.txt, ...\test.txt) which the YOLO model will iterate through
+## 2. Model Training (Cloud)
 
-```python3 voc_label2.py```
-* same as above but for the motion masking images
+Trains on a RunPod GPU pod. Assumes a Hopper-architecture GPU (e.g. H100).
 
-## executing training, evaluation, and inference
-```python3 train.py --data data/NPS.yaml --cfg models/NPS_uav_s.yaml --weights yolov5s.pt --batch-size 8 --epochs 100 --imgsz 1280 --name NPS-1280```
-* this runs a training run on a single GPU, using the NPS.yaml configuration, building the NPS_uav_s.yaml model architecture, initialising with standard YOLOv5s weights, and training with 100 epochs on 1280x1280 size images, before saving the outputs in the NPS-1280 directory
+```bash
+tmux new -s train
+python train_cloud.py --data data/ARD100_1280.yaml --cfg models/YOLOMG_ARD100.yaml \
+    --batch-size -1 --epochs 2 --imgsz 1280 --name ARD100-test-1280-
+```
+`train_cloud.py` extracts the preprocessed dataset from a network-volume `.tar` archive, logs to ClearML, and terminates the pod on completion.
 
-```python -m torch.distributed.run --nproc_per_node=4 --master_port 12345 train.py --data data/ARD100_mask32.yaml --cfg models/ARD100_drone_s.yaml --weights yolov5s.pt --batch-size 16 --epochs 100 --imgsz 1280 --name ARD100_mask32-1280 --device 0,1,2,3```
-* this runs a distributed training run, in this case on four GPUs
+## 3. Inference on Host Device
 
-```python3 val.py --weights runs/train/NPS-1280/weights/best.pt --data data/NPS_test.yaml --task val --conf-thres 0.001 --name NPS_test-1280 --imgsz 1280 --batch-size 8 --device 0```
-* this evaluates the trained best.pt weights at a very low confidence threshold (0.001)
+Runs the full detection pipeline on a machine with a discrete GPU, reporting mAP and FPS.
 
-```python3 dualdetector.py```
-* this runs a quick inference run to verify the system works
+```bash
+cd edge
+python inference_host.py
+```
+Configure the necessary arguments (e.g. `weights`, `imgsz`, `video_dir`) at the bottom of the script (`if __name__ == "__main__":`) before running.
+
+## 4. Inference on Edge Device (Jetson)
+
+Runs the TensorRT-compiled model on a Jetson Orin Nano Super (L4T 36.5.2 / JetPack 6.2.3, `jetson-containers` with the `l4t-ml:36.4.0` image).
+
+```bash
+# Jetson host terminal (outside the container):
+sudo jetson_clocks
+jetson-containers run -d --name yolomg \
+    -v /ssd/workspace/yolomg:/workspace/yolomg -v /ssd/workspace/videos:/workspace/videos \
+    $(autotag l4t-ml)
+docker exec -it yolomg bash
+
+# container terminal:
+cd workspace/yolomg
+pip install -r requirements-jetson.txt --index-url https://pypi.org/simple
+python3 edge/inference_jetson.py              # accuracy + FPS (low conf. threshold)
+# or
+python3 edge/inference_jetson_deployment.py   # realistic deployment FPS
+```
+As with `inference_host.py`, run parameters must be configured at the bottom of each script.
+
+## 5. Post-Training Quantisation (Edge)
+
+Compiles INT8 TensorRT engines for the Jetson, calibrated on a stratified sample of training frames.
+
+```bash
+# build calibration set (repo root)
+python3 data/ptq_extract_tensors.py
+
+# export ONNX
+python3 edge/export_YOLOMG.py --weights weights/best_640.pt --imgsz 640 --include onnx
+
+# compile INT8 engine (on the Jetson, inside the container — see Section 4)
+tmux new -s engine
+python3 edge/ptq_compile_int8_engine.py \
+    --onnx weights/best_640.onnx --engine weights/best_640_int8_fp16model6.engine \
+    --rgb_dir data/ptq_calibration_RGB_tensors_640 --mask_dir data/ptq_calibration_MASKS_tensors_640 \
+    --imgsz 640 --batch 1 --strategy fp16model6
+```
+`--strategy fp16model6` pins the model's backbone and detection heads to FP16 (leaving the neck at INT8), giving the best accuracy/speed trade-off found in this project. The resulting `.engine` file can be substituted into `inference_jetson.py` in place of the `.pt` weights.
