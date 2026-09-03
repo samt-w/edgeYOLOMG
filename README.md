@@ -1,10 +1,10 @@
 # edgeYOLOMG
 
-This is an adapted repo, cloned from the [YOLOMG](https://github.com/Irisky123/YOLOMG) repo, for an MSc Project.
+This is an adapted repo, cloned from the [YOLOMG](https://github.com/Irisky123/YOLOMG) repo, for a MSc Project.
 
 This is a model trying to detect UAVs in video data. The original YOLOMG model was adapted from YOLOv5s, adding a motion-masking classical computer vision algorithm.
 
-This project aims to run YOLOMG on edge hardware (an NVIDIA Jetson Orin Nano) to see whether the algorithm's high mAP and FPS can be maintained on constrained hardware.
+This project aims to run YOLOMG on edge hardware (a NVIDIA Jetson Orin Nano) to see whether the algorithm's high mAP and FPS can be maintained on constrained hardware.
 
 Full step-by-step instructions (including environment setup, RunPod cloud training, and Jetson-specific commands) are in the project report's software appendix. This README is a quick-reference summary.
 
@@ -13,7 +13,8 @@ Full step-by-step instructions (including environment setup, RunPod cloud traini
 The dataset is the ARD100 dataset, created by the original researchers:
 - [BaiduYun](https://pan.baidu.com/s/1ycAoKbzQ1rlzvKr8VRakgw?pwd=1x2z) (code: 1x2z)
 
-![Dataset Example Images](data/ARD100_samples_show.png "Example Images")
+Dataset Example Images:
+![Dataset Example Images](data/archive/ARD100_samples_show.png "Example Images")
 
 ## Repo Structure
 
@@ -47,8 +48,7 @@ Trains on a RunPod GPU pod. Assumes a Hopper-architecture GPU (e.g. H100).
 
 ```bash
 tmux new -s train
-python train_cloud.py --data data/ARD100_1280.yaml --cfg models/YOLOMG_ARD100.yaml \
-    --batch-size -1 --epochs 2 --imgsz 1280 --name ARD100-test-1280-
+python train_cloud.py --data data/ARD100_1280.yaml --cfg models/YOLOMG_ARD100.yaml --batch-size -1 --epochs 2 --imgsz 1280 --name ARD100-test-1280-
 ```
 `train_cloud.py` extracts the preprocessed dataset from a network-volume `.tar` archive, logs to ClearML, and terminates the pod on completion.
 

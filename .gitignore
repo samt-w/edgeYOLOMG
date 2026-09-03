@@ -14,6 +14,7 @@ data_prep_scripts/mask_telemetry.log
 edge/inference_results/
 *inference-results.csv
 *inference_results.csv
+profiler_logs/
 
 # Model training runs
 runs/
